@@ -148,6 +148,11 @@ content = content.replace(
     'RUN /isaac-sim/python.sh -m pip install --no-deps -e ${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop',
     'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" ] && /isaac-sim/python.sh -m pip install --no-deps -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" || echo "Skipping isaaclab_teleop (not found)"'
 )
+# isaaclab_newton may also be missing - skip if not present
+content = content.replace(
+    'RUN /isaac-sim/python.sh -m pip install -e       "${WORKDIR}/submodules/IsaacLab/source/isaaclab_newton[all]"',
+    'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_newton" ] && /isaac-sim/python.sh -m pip install -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_newton[all]" || echo "Skipping isaaclab_newton (not found)"'
+)
 
 # Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
 # Also install EGL dev libs needed by egl_probe (optional headless rendering detector)
