@@ -93,22 +93,19 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         This mode starts the Omniverse Kit automatically, then creates the
         Arena environment within the running Kit process.
         """
-        # In Docker mode, SimulationApp should already be started by the
-        # entrypoint. We just need to verify it's ready.
-        try:
-            from omni.isaac.kit import SimulationApp
+        # Isaac Sim 6.0 uses isaacsim.simulation_app instead of omni.isaac.kit
+        if self._simulation_app is None:
+            try:
+                from isaacsim.simulation_app import SimulationApp
 
-            if self._simulation_app is None:
                 self._simulation_app = SimulationApp(
                     {"headless": self.headless, "width": 1280, "height": 720}
                 )
-        except ImportError:
-            # Fallback: try direct isaacsim import
-            from isaacsim.core.api.simulation_context import SimulationContext
-
-            self._simulation_app = SimulationContext()
-            if not self._simulation_app.is_running():
-                self._simulation_app.initialize()
+            except ImportError as e:
+                raise RuntimeError(
+                    "IsaacSim SimulationApp not available. "
+                    "Ensure the container is based on nvcr.io/nvidia/isaac-sim."
+                ) from e
 
         # Now build the Arena environment
         self._build_real()
