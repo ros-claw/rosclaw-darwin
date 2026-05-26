@@ -115,6 +115,7 @@ source_rewrite = f"""RUN rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/* /
     && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99no-check \\
     && apt-get clean \\
     && apt-get update --allow-insecure-repositories --allow-releaseinfo-change -y || true
+ENV GIT_HTTP_LOW_SPEED_TIME=30 GIT_HTTP_LOW_SPEED_LIMIT=1000
 """
 content = content.replace('USER root\n', 'USER root\n' + source_rewrite + '\n')
 
