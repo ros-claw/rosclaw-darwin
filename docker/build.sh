@@ -168,6 +168,12 @@ content = content.replace(
     'RUN OPENPI_COMMIT=$(tr -d \'[:space:]\' < /tmp/openpi_commit) \\\n    && /isaac-sim/python.sh -m pip install --no-cache-dir \\\n    "openpi-client @ git+https://github.com/Physical-Intelligence/openpi@${OPENPI_COMMIT}#subdirectory=packages/openpi-client" \\\n    || echo "Skipping openpi-client (network issue)" \\\n    && rm -f /tmp/openpi_commit'
 )
 
+# Remove .claude directory before COPY *.* to avoid symlink conflicts
+content = content.replace(
+    '# Copy the rest of the files\nCOPY *.* ${WORKDIR}/',
+    '# Remove .claude directory before copy to avoid symlink conflicts\nRUN rm -rf .claude\n# Copy the rest of the files\nCOPY *.* ${WORKDIR}/'
+)
+
 # Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
 # Also install EGL dev libs needed by egl_probe (optional headless rendering detector)
 content = content.replace(
