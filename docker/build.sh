@@ -142,8 +142,8 @@ with open(PATCHED_DOCKERFILE, 'w') as f:
 PYEOF
 
 # Also fix remaining 'apt' calls (not apt-get) that weren't caught by regex above
-sed -i 's|apt update|apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true|g' "${PATCHED_DOCKERFILE}"
-sed -i 's|apt install|apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing|g' "${PATCHED_DOCKERFILE}"
+sed -i 's#apt update#apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true#g' "${PATCHED_DOCKERFILE}"
+sed -i 's#apt install#apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing#g' "${PATCHED_DOCKERFILE}"
 
 # Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
