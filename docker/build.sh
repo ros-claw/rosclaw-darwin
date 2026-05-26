@@ -98,10 +98,20 @@ python3 -c "
 import re
 with open('${PATCHED_DOCKERFILE}', 'r') as f:
     content = f.read()
-# Replace apt-get update line
+
+# Insert full sources.list rewrite after 'USER root'
+source_rewrite = '''RUN echo "deb http://${APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
+    && echo "deb http://${APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
+    && echo "deb http://${APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
+    && apt-get clean \\
+    && apt-get update || true
+'''
+content = content.replace('USER root\n', 'USER root\n' + source_rewrite + '\n')
+
+# Replace apt-get install line to be more resilient
 content = re.sub(
     r'RUN apt-get update && apt-get install -y',
-    'RUN apt-get update --fix-missing || true && apt-get install -y --fix-missing --allow-unauthenticated',
+    'RUN apt-get install -y --no-install-recommends',
     content
 )
 with open('${PATCHED_DOCKERFILE}', 'w') as f:
