@@ -93,7 +93,20 @@ sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 
 # Fix apt-get to be more resilient to network issues
-sed -i 's|RUN apt-get update && apt-get install -y|RUN apt-get update --fix-missing || true \&\& apt-get install -y --fix-missing --allow-unauthenticated|g' "${PATCHED_DOCKERFILE}"
+# Use Python for reliable multi-line replacement
+python3 -c "
+import re
+with open('${PATCHED_DOCKERFILE}', 'r') as f:
+    content = f.read()
+# Replace apt-get update line
+content = re.sub(
+    r'RUN apt-get update && apt-get install -y',
+    'RUN apt-get update --fix-missing || true && apt-get install -y --fix-missing --allow-unauthenticated',
+    content
+)
+with open('${PATCHED_DOCKERFILE}', 'w') as f:
+    f.write(content)
+"
 
 # Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
