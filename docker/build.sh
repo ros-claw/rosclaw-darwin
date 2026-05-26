@@ -93,19 +93,19 @@ sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 
 # Fix apt-get to be more resilient to network issues
-# Use Python for reliable multi-line replacement
-python3 -c "
+# Use Python via here-doc to avoid shell interpreting special chars
+python3 << 'PYEOF'
 import re
 with open('${PATCHED_DOCKERFILE}', 'r') as f:
     content = f.read()
 
 # Insert full sources.list rewrite after 'USER root'
-source_rewrite = '''RUN echo "deb http://${APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
+source_rewrite = """RUN echo "deb http://${APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
     && echo "deb http://${APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
     && echo "deb http://${APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
     && apt-get clean \\
     && apt-get update || true
-'''
+"""
 content = content.replace('USER root\n', 'USER root\n' + source_rewrite + '\n')
 
 # Replace apt-get install line to be more resilient
@@ -116,7 +116,7 @@ content = re.sub(
 )
 with open('${PATCHED_DOCKERFILE}', 'w') as f:
     f.write(content)
-"
+PYEOF
 
 # Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
