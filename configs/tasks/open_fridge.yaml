@@ -1,0 +1,36 @@
+id: open_fridge_001
+name: Open Fridge
+version: "1.0"
+description: Open the refrigerator door.
+source: rosclaw-tdl
+scene: kitchen_modern_01
+primitives:
+  - name: Navigate
+    params: {}
+    target: fridge
+  - name: Grasp
+    params: {force: 2.0}
+    target: fridge_handle
+  - name: Open
+    params: {}
+    target: fridge
+objects:
+  - name: fridge
+    object_type: articulated
+    properties: {joint_type: hinge}
+  - name: fridge_handle
+    object_type: graspable
+    properties: {material: metal}
+constraints:
+  - name: gentle_force
+    constraint_type: safety
+    description: Do not pull too hard
+    weight: 1.0
+eval_config:
+  max_steps: 200
+  timeout_seconds: 30.0
+  success_criteria: [fridge_door_open]
+  metrics: [success_rate, completion_time]
+  repetitions: 5
+tags: [kitchen, atomic, open]
+difficulty: 1.0

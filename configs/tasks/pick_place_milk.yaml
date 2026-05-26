@@ -1,0 +1,49 @@
+id: pick_place_milk_001
+name: Pick and Place Milk
+version: "1.0"
+description: Pick a milk carton from the counter and place it in the fridge.
+source: rosclaw-tdl
+scene: kitchen_modern_01
+primitives:
+  - name: Navigate
+    params: {}
+    target: counter
+  - name: Pick
+    params: {force: 3.0}
+    target: milk_carton
+  - name: Navigate
+    params: {}
+    target: fridge
+  - name: Open
+    params: {}
+    target: fridge
+  - name: Place
+    params: {}
+    target: fridge_shelf
+  - name: Close
+    params: {}
+    target: fridge
+objects:
+  - name: milk_carton
+    object_type: graspable
+    properties: {weight: 0.5, material: cardboard}
+  - name: fridge
+    object_type: articulated
+    properties: {joint_type: hinge}
+constraints:
+  - name: upright_placement
+    constraint_type: physical
+    description: Milk carton must remain upright
+    weight: 2.0
+  - name: avoid_spill
+    constraint_type: safety
+    description: Do not tilt milk carton
+    weight: 3.0
+eval_config:
+  max_steps: 500
+  timeout_seconds: 60.0
+  success_criteria: [milk_in_fridge, fridge_closed]
+  metrics: [success_rate, completion_time, path_efficiency]
+  repetitions: 3
+tags: [kitchen, manipulation, pick_place]
+difficulty: 2.5
