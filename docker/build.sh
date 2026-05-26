@@ -173,10 +173,10 @@ content = content.replace(
     '# Skipped: openpi-client requires GitHub submodules (network issues in China)\n'
 )
 
-# Remove .claude directory before COPY *.* to avoid symlink conflicts
+# Replace wildcard COPY with explicit file list to avoid .claude/skills symlink conflict
 content = content.replace(
-    '# Copy the rest of the files\nCOPY *.* ${WORKDIR}/',
-    '# Remove .claude directory before copy to avoid symlink conflicts\nRUN rm -rf .claude\n# Copy the rest of the files\nCOPY *.* ${WORKDIR}/'
+    'COPY *.* ${WORKDIR}/',
+    'COPY *.py *.toml *.cfg *.ini *.txt *.md *.json *.yaml *.yml *.sh ${WORKDIR}/'
 )
 
 # Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
