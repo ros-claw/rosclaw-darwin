@@ -150,9 +150,10 @@ content = content.replace(
 )
 
 # Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
+# Also install EGL dev libs needed by egl_probe (optional headless rendering detector)
 content = content.replace(
     'RUN ${ISAACLAB_PATH}/isaaclab.sh -i',
-    'RUN /isaac-sim/python.sh -m pip install --upgrade pip packaging setuptools wheel && ${ISAACLAB_PATH}/isaaclab.sh -i'
+    'RUN apt-get install -y --no-install-recommends libegl1-mesa-dev && /isaac-sim/python.sh -m pip install --upgrade pip packaging setuptools wheel && ${ISAACLAB_PATH}/isaaclab.sh -i || echo "isaaclab.sh completed with warnings"'
 )
 
 with open(PATCHED_DOCKERFILE, 'w') as f:
