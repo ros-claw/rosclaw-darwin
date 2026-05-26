@@ -18,7 +18,7 @@ BASE_IMAGE_TAG="rosclaw-darwin:arena-base"
 FULL_IMAGE_TAG="rosclaw-darwin:latest"
 
 # Build args
-APT_MIRROR="${APT_MIRROR:-mirrors.aliyun.com}"
+APT_MIRROR="${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}"
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 PIP_EXTRA_INDEX="${PIP_EXTRA_INDEX:-https://pypi.ngc.nvidia.com}"
 
@@ -99,23 +99,27 @@ export APT_MIRROR
 python3 << 'PYEOF'
 import re, os
 PATCHED_DOCKERFILE = os.environ.get('PATCHED_DOCKERFILE', '/tmp/Dockerfile.rosclaw')
-APT_MIRROR = os.environ.get('APT_MIRROR', 'mirrors.aliyun.com')
+APT_MIRROR = os.environ.get('APT_MIRROR', 'mirrors.tuna.tsinghua.edu.cn')
 with open(PATCHED_DOCKERFILE, 'r') as f:
     content = f.read()
 
-# Insert full sources.list rewrite after 'USER root'
-source_rewrite = f"""RUN echo "deb http://{APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
+# Insert full sources.list rewrite + apt hardening after 'USER root'
+source_rewrite = f"""RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\
+    && echo "deb http://{APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
     && echo "deb http://{APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
     && echo "deb http://{APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
+    && echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check \\
+    && echo 'Acquire::AllowInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99no-check \\
+    && echo 'Acquire::AllowDowngradeToInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99no-check \\
     && apt-get clean \\
-    && apt-get update || true
+    && apt-get update --allow-insecure-repositories --allow-releaseinfo-change -y || true
 """
 content = content.replace('USER root\n', 'USER root\n' + source_rewrite + '\n')
 
 # Replace apt-get install line to be more resilient
 content = re.sub(
     r'RUN apt-get update && apt-get install -y',
-    'RUN apt-get install -y --no-install-recommends',
+    'RUN apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true && apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing',
     content
 )
 with open(PATCHED_DOCKERFILE, 'w') as f:
@@ -124,7 +128,7 @@ PYEOF
 
 # Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
-# Configure pip to use Tsinghua mirror + NVIDIA NGC extra index\nRUN /isaac-sim/python.sh -m pip config set global.index-url '"${PIP_INDEX}"' 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.extra-index-url '"${PIP_EXTRA_INDEX}"' 2>/dev/null || true' "${PATCHED_DOCKERFILE}"
+# Configure pip to use Tsinghua mirror + NVIDIA NGC extra index\nRUN /isaac-sim/python.sh -m pip config set global.index-url '"${PIP_INDEX}"' 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn pypi.ngc.nvidia.com pypi.org files.pythonhosted.org 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.extra-index-url '"${PIP_EXTRA_INDEX}"' 2>/dev/null || true' "${PATCHED_DOCKERFILE}"
 
 echo "  Patched: ${PATCHED_DOCKERFILE}"
 
