@@ -18,7 +18,7 @@ BASE_IMAGE_TAG="rosclaw-darwin:arena-base"
 FULL_IMAGE_TAG="rosclaw-darwin:latest"
 
 # Build args
-APT_MIRROR="${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}"
+APT_MIRROR="${APT_MIRROR:-repo.huaweicloud.com}"
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 PIP_EXTRA_INDEX="${PIP_EXTRA_INDEX:-https://pypi.ngc.nvidia.com}"
 
@@ -104,19 +104,34 @@ with open(PATCHED_DOCKERFILE, 'r') as f:
     content = f.read()
 
 # Insert full sources.list rewrite + apt hardening after 'USER root'
-source_rewrite = f"""RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\
+source_rewrite = f"""RUN rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/* /tmp/* /var/tmp/* \\
     && echo "deb http://{APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
     && echo "deb http://{APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
     && echo "deb http://{APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
     && echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check \\
     && echo 'Acquire::AllowInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99no-check \\
     && echo 'Acquire::AllowDowngradeToInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99no-check \\
+    && echo 'Acquire::Retries "3";' >> /etc/apt/apt.conf.d/99no-check \\
+    && echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99no-check \\
     && apt-get clean \\
     && apt-get update --allow-insecure-repositories --allow-releaseinfo-change -y || true
 """
 content = content.replace('USER root\n', 'USER root\n' + source_rewrite + '\n')
 
-# Replace apt-get install line to be more resilient
+# Replace ALL apt-get/apt update + install lines to be more resilient
+# Pattern 1: apt-get update && apt-get install -y
+content = re.sub(
+    r'RUN apt-get update && apt-get install -y',
+    'RUN apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true && apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing',
+    content
+)
+# Pattern 2: apt update && apt install (used later in Dockerfile)
+content = re.sub(
+    r'apt update &&\\s*\\\n\\s*apt install',
+    'apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true && apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing',
+    content
+)
+# Pattern 3: standalone apt-get update (e.g., before pipx install)
 content = re.sub(
     r'RUN apt-get update && apt-get install -y',
     'RUN apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true && apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing',
@@ -125,6 +140,10 @@ content = re.sub(
 with open(PATCHED_DOCKERFILE, 'w') as f:
     f.write(content)
 PYEOF
+
+# Also fix remaining 'apt' calls (not apt-get) that weren't caught by regex above
+sed -i 's|apt update|apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true|g' "${PATCHED_DOCKERFILE}"
+sed -i 's|apt install|apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing|g' "${PATCHED_DOCKERFILE}"
 
 # Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
