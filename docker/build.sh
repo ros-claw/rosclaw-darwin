@@ -162,10 +162,15 @@ content = content.replace(
     'RUN /isaac-sim/python.sh -m pip install msgpack==1.1.0 msgpack-numpy==0.4.8 pyzmq==27.0.1 \\\n    && ([ -f "${WORKDIR}/submodules/Isaac-GR00T/setup.py" ] || [ -f "${WORKDIR}/submodules/Isaac-GR00T/pyproject.toml" ]) \\\n    && /isaac-sim/python.sh -m pip install --no-deps --ignore-requires-python -e "${WORKDIR}/submodules/Isaac-GR00T/" \\\n    || echo "Skipping Isaac-GR00T (not a Python project)"'
 )
 
-# openpi-client may fail due to GitHub network issues - skip gracefully
+# openpi-client depends on GitHub submodules that hang in China - remove entirely
+# Also remove the OPENPI_COMMIT COPY since it's only needed for openpi-client
 content = content.replace(
-    'RUN OPENPI_COMMIT=$(tr -d \'[:space:]\' < /tmp/openpi_commit) && \\\n    /isaac-sim/python.sh -m pip install --no-cache-dir \\\n    "openpi-client @ git+https://github.com/Physical-Intelligence/openpi@${OPENPI_COMMIT}#subdirectory=packages/openpi-client" && \\\n    rm /tmp/openpi_commit',
-    'RUN OPENPI_COMMIT=$(tr -d \'[:space:]\' < /tmp/openpi_commit) \\\n    && /isaac-sim/python.sh -m pip install --no-cache-dir \\\n    "openpi-client @ git+https://github.com/Physical-Intelligence/openpi@${OPENPI_COMMIT}#subdirectory=packages/openpi-client" \\\n    || echo "Skipping openpi-client (network issue)" \\\n    && rm -f /tmp/openpi_commit'
+    'COPY isaaclab_arena_openpi/docker/OPENPI_COMMIT /tmp/openpi_commit\n',
+    '# Skipped: OPENPI_COMMIT only needed for openpi-client (GitHub network issues)\n'
+)
+content = content.replace(
+    'RUN OPENPI_COMMIT=$(tr -d \'[:space:]\' < /tmp/openpi_commit) && \\\n    /isaac-sim/python.sh -m pip install --no-cache-dir \\\n    "openpi-client @ git+https://github.com/Physical-Intelligence/openpi@${OPENPI_COMMIT}#subdirectory=packages/openpi-client" && \\\n    rm /tmp/openpi_commit\n',
+    '# Skipped: openpi-client requires GitHub submodules (network issues in China)\n'
 )
 
 # Remove .claude directory before COPY *.* to avoid symlink conflicts
