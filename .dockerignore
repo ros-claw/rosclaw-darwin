@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# Data and logs
+darwin_results/
+*.mcap
+*.log
+logs/
+
+# Docker
+docker/build-base.log
+docker/build-full.log
+docker/Dockerfile.rosclaw
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation build
+docs/_build/
+
+# CI/CD
+.github/
+.claude/
+
+# Large files
+*.h5
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Note: reference_projects/ is not included in the Docker build context
+# It is mounted at build time via build.sh

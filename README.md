@@ -72,6 +72,26 @@ This is the shift from **static evaluation** to **evolutionary evaluation**.
 
 ## Quick Start
 
+### Option A: One-Click Docker Deploy (Recommended)
+
+```bash
+# 1. Clone
+git clone https://github.com/ros-claw/rosclaw-darwin.git
+cd rosclaw-darwin
+
+# 2. Deploy (downloads IsaacLab-Arena, builds images, runs smoke test)
+./scripts/deploy.sh
+
+# 3. Run demo
+make demo
+
+# 4. Start dashboard
+make dashboard
+# Open http://localhost:8080
+```
+
+### Option B: Local Development (Mock Mode)
+
 ```bash
 # 1. Install
 cd rosclaw-darwin
@@ -87,6 +107,26 @@ python -m pytest tests/ -v
 python -m rosclaw_darwin.dashboard.app
 # Open http://localhost:8080
 ```
+
+### Docker Make Targets
+
+```bash
+make help        # Show all available targets
+make build       # Build Docker images (base + full)
+make build-base  # Build IsaacLab-Arena base image only
+make build-full  # Build rosclaw-darwin layer
+make run         # Start interactive container shell
+make run-detached # Start container in background
+make demo        # Run end-to-end demo inside container
+make test        # Run pytest suite inside container
+make eval        # Evaluate default task
+make dashboard   # Start EEIB leaderboard on port 8080
+make deploy      # Full one-click deployment
+make status      # Show container and image status
+make clean       # Remove containers and images
+```
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment guide and [docs/DOCKER.md](docs/DOCKER.md) for Docker usage patterns.
 
 ## Task Definition Language (TDL)
 
