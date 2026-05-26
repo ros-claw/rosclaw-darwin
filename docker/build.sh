@@ -88,10 +88,13 @@ cp "${ISAACLAB_ARENA_DIR}/docker/Dockerfile.isaaclab_arena" "${PATCHED_DOCKERFIL
 sed -i "s|http://archive.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" "${PATCHED_DOCKERFILE}"
 sed -i "s|http://security.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" "${PATCHED_DOCKERFILE}"
 
-# Fix pip sources - add Tsinghua mirror before all pip install commands
-# This is done by setting pip config globally in the container
+# Also fix any plain archive.ubuntu.com references (without protocol)
+sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
+sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
+
+# Fix pip sources - configure pip to use Tsinghua mirror + NVIDIA NGC extra index
 sed -i '/USER root/a\
-# Configure pip to use Tsinghua mirror + NVIDIA NGC extra index\nRUN /isaac-sim/python.sh -m pip config set global.index-url '"${PIP_INDEX}"'\nRUN /isaac-sim/python.sh -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn\nRUN /isaac-sim/python.sh -m pip config set global.extra-index-url '"${PIP_EXTRA_INDEX}"'' "${PATCHED_DOCKERFILE}"
+# Configure pip to use Tsinghua mirror + NVIDIA NGC extra index\nRUN /isaac-sim/python.sh -m pip config set global.index-url '"${PIP_INDEX}"' 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.extra-index-url '"${PIP_EXTRA_INDEX}"' 2>/dev/null || true' "${PATCHED_DOCKERFILE}"
 
 echo "  Patched: ${PATCHED_DOCKERFILE}"
 

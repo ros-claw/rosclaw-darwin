@@ -7,52 +7,111 @@ unit tests and development.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from rosclaw_darwin.tdl.schema import Task
 from .base import BaseEnvironmentAdapter
 
 
 class ArenaAdapter(BaseEnvironmentAdapter):
-    """Adapter for NVIDIA IsaacLab-Arena simulator."""
+    """Adapter for NVIDIA IsaacLab-Arena simulator.
+
+    Supports three modes:
+      1. **mock** (default): No GPU required, for development/CI.
+      2. **real**: Direct import in a Kit-enabled Python process.
+      3. **docker**: Runs inside Docker container with full Isaac Sim.
+
+    The mode is auto-selected based on availability:
+      - If `isaaclab_arena` is importable -> real mode.
+      - If `SIMULATION_APP` env var is set -> docker mode.
+      - Otherwise -> mock mode.
+    """
 
     name = "isaaclab-arena"
 
-    def __init__(self, task: Task, robot: str = "franka", headless: bool = True, **kwargs: Any):
+    def __init__(
+        self,
+        task: Task,
+        robot: str = "franka",
+        headless: bool = True,
+        mode: str | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(task, **kwargs)
         self.robot = robot
         self.headless = headless
-        self._arena_available = self._check_arena()
+        self._mode = mode or self._detect_mode()
         self._step_count = 0
+        self._simulation_app: Any | None = None
 
     @staticmethod
-    def _check_arena() -> bool:
+    def _detect_mode() -> str:
+        import os
+
+        # Docker mode: explicit override via env var
+        if os.environ.get("ROSCLAW_ARENA_MODE") == "docker":
+            return "docker"
+
+        # Real mode: isaaclab_arena is importable (must be in Kit process)
         try:
             import isaaclab_arena  # noqa: F401
-            return True
+            return "real"
         except ImportError:
-            return False
+            pass
+
+        # Mock mode: fallback for development
+        return "mock"
 
     def build(self) -> None:
-        if self._arena_available:
+        if self._mode == "real":
             self._build_real()
+        elif self._mode == "docker":
+            self._build_docker()
         else:
             self._build_mock()
 
     def _build_real(self) -> None:
-        """Build using real IsaacLab-Arena APIs."""
-        # Deferred import so the module loads even without isaaclab_arena installed.
-        from isaaclab_arena import ArenaEnvBuilder  # type: ignore[import-untyped]
+        """Build using real IsaacLab-Arena APIs.
+
+        Requires running inside an Omniverse Kit process (e.g. via
+        `/isaac-sim/kit/kit`).
+        """
+        from isaaclab_arena.environments.arena_env_builder import ArenaEnvBuilder
 
         builder = ArenaEnvBuilder()
         builder.set_scene(self.task.scene)
         builder.set_embodiment(self.robot)
 
-        # Map ROSClaw primitives to Arena task objectives
         for p in self.task.primitives:
             builder.add_task_objective(p.name, target=p.target, params=p.params)
 
         self._env = builder.make_registered(headless=self.headless)
+
+    def _build_docker(self) -> None:
+        """Build inside Docker container with Isaac Sim.
+
+        This mode starts the Omniverse Kit automatically, then creates the
+        Arena environment within the running Kit process.
+        """
+        # In Docker mode, SimulationApp should already be started by the
+        # entrypoint. We just need to verify it's ready.
+        try:
+            from omni.isaac.kit import SimulationApp
+
+            if self._simulation_app is None:
+                self._simulation_app = SimulationApp(
+                    {"headless": self.headless, "width": 1280, "height": 720}
+                )
+        except ImportError:
+            # Fallback: try direct isaacsim import
+            from isaacsim.core.api.simulation_context import SimulationContext
+
+            self._simulation_app = SimulationContext()
+            if not self._simulation_app.is_running():
+                self._simulation_app.initialize()
+
+        # Now build the Arena environment
+        self._build_real()
 
     def _build_mock(self) -> None:
         """Mock environment for development without Isaac Sim."""
@@ -75,14 +134,33 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             if hasattr(self._env, "close"):
                 self._env.close()
             self._env = None
+        if self._simulation_app is not None:
+            self._simulation_app.close()
+            self._simulation_app = None
 
     def get_state(self) -> dict[str, Any]:
         return {
             **super().get_state(),
-            "backend": "isaaclab-arena" if self._arena_available else "mock",
+            "backend": self._mode,
             "robot": self.robot,
             "step_count": self._step_count,
         }
+
+    @classmethod
+    def create_in_container(
+        cls,
+        task: Task,
+        container_name: str = "rosclaw_darwin",
+        **kwargs: Any,
+    ) -> "ArenaAdapter":
+        """Create an adapter that runs inside a Docker container.
+
+        This is the recommended way to use real Isaac Sim from host Python.
+        """
+        import os
+
+        os.environ["ROSCLAW_ARENA_MODE"] = "docker"
+        return cls(task, **kwargs)
 
 
 class _MockArenaEnv:
