@@ -155,6 +155,12 @@ content = content.replace(
     'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_newton" ] && /isaac-sim/python.sh -m pip install -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_newton[all]" || echo "Skipping isaaclab_newton (not found)"'
 )
 
+# Isaac-GR00T submodule may be empty - skip install if not a valid Python project
+content = content.replace(
+    'RUN /isaac-sim/python.sh -m pip install msgpack==1.1.0 msgpack-numpy==0.4.8 pyzmq==27.0.1 && \\\n    /isaac-sim/python.sh -m pip install --no-deps --ignore-requires-python -e ${WORKDIR}/submodules/Isaac-GR00T/',
+    'RUN /isaac-sim/python.sh -m pip install msgpack==1.1.0 msgpack-numpy==0.4.8 pyzmq==27.0.1 \\\n    && ([ -f "${WORKDIR}/submodules/Isaac-GR00T/setup.py" ] || [ -f "${WORKDIR}/submodules/Isaac-GR00T/pyproject.toml" ]) \\\n    && /isaac-sim/python.sh -m pip install --no-deps --ignore-requires-python -e "${WORKDIR}/submodules/Isaac-GR00T/" \\\n    || echo "Skipping Isaac-GR00T (not a Python project)"'
+)
+
 # Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
 # Also install EGL dev libs needed by egl_probe (optional headless rendering detector)
 content = content.replace(
