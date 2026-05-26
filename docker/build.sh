@@ -137,6 +137,18 @@ content = re.sub(
     'RUN apt-get update --allow-insecure-repositories --allow-releaseinfo-change || true && apt-get install -y --no-install-recommends --allow-unauthenticated --fix-missing',
     content
 )
+
+# Fix missing isaaclab packages that may not exist in current IsaacLab version
+# (isaaclab_visualizers and isaaclab_teleop were removed in newer IsaacLab)
+content = content.replace(
+    'RUN /isaac-sim/python.sh -m pip install --no-deps -e ${WORKDIR}/submodules/IsaacLab/source/isaaclab_visualizers',
+    'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_visualizers" ] && /isaac-sim/python.sh -m pip install --no-deps -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_visualizers" || echo "Skipping isaaclab_visualizers (not found)"'
+)
+content = content.replace(
+    'RUN /isaac-sim/python.sh -m pip install --no-deps -e ${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop',
+    'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" ] && /isaac-sim/python.sh -m pip install --no-deps -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" || echo "Skipping isaaclab_teleop (not found)"'
+)
+
 with open(PATCHED_DOCKERFILE, 'w') as f:
     f.write(content)
 PYEOF
