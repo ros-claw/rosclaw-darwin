@@ -149,6 +149,12 @@ content = content.replace(
     'RUN [ -d "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" ] && /isaac-sim/python.sh -m pip install --no-deps -e "${WORKDIR}/submodules/IsaacLab/source/isaaclab_teleop" || echo "Skipping isaaclab_teleop (not found)"'
 )
 
+# Fix pip compatibility before isaaclab.sh -i (Isaac Sim pip may conflict with apt python3-pip)
+content = content.replace(
+    'RUN ${ISAACLAB_PATH}/isaaclab.sh -i',
+    'RUN /isaac-sim/python.sh -m pip install --upgrade pip packaging setuptools wheel && ${ISAACLAB_PATH}/isaaclab.sh -i'
+)
+
 with open(PATCHED_DOCKERFILE, 'w') as f:
     f.write(content)
 PYEOF
