@@ -93,16 +93,20 @@ sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" "${PATCHED_DOCKERFILE}"
 
 # Fix apt-get to be more resilient to network issues
-# Use Python via here-doc to avoid shell interpreting special chars
+# Export vars for Python here-doc
+export PATCHED_DOCKERFILE
+export APT_MIRROR
 python3 << 'PYEOF'
-import re
-with open('${PATCHED_DOCKERFILE}', 'r') as f:
+import re, os
+PATCHED_DOCKERFILE = os.environ.get('PATCHED_DOCKERFILE', '/tmp/Dockerfile.rosclaw')
+APT_MIRROR = os.environ.get('APT_MIRROR', 'mirrors.aliyun.com')
+with open(PATCHED_DOCKERFILE, 'r') as f:
     content = f.read()
 
 # Insert full sources.list rewrite after 'USER root'
-source_rewrite = """RUN echo "deb http://${APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
-    && echo "deb http://${APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
-    && echo "deb http://${APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
+source_rewrite = f"""RUN echo "deb http://{APT_MIRROR}/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list \\
+    && echo "deb http://{APT_MIRROR}/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list \\
+    && echo "deb http://{APT_MIRROR}/ubuntu/ noble-security main restricted universe multiverse" >> /etc/apt/sources.list \\
     && apt-get clean \\
     && apt-get update || true
 """
@@ -114,7 +118,7 @@ content = re.sub(
     'RUN apt-get install -y --no-install-recommends',
     content
 )
-with open('${PATCHED_DOCKERFILE}', 'w') as f:
+with open(PATCHED_DOCKERFILE, 'w') as f:
     f.write(content)
 PYEOF
 
