@@ -39,6 +39,9 @@ RUN /isaac-sim/python.sh -m pip install -e "${ROSCLAW_DARWIN_PATH}"
 # Install dashboard dependencies if needed
 RUN /isaac-sim/python.sh -m pip install fastapi uvicorn
 
+# Install SeekDB (rosclaw-memory) dependencies for embedded mode
+RUN /isaac-sim/python.sh -m pip install sqlalchemy pyobvector pydantic-settings rank-bm25
+
 # Create data directories
 RUN mkdir -p /data/rosclaw/mcap /data/rosclaw/fallback /data/seekdb/darwin
 

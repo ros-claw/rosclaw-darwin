@@ -198,6 +198,17 @@ sed -i 's#apt install#apt-get install -y --no-install-recommends --allow-unauthe
 sed -i '/USER root/a\
 # Configure pip to use Tsinghua mirror + NVIDIA NGC extra index\nRUN /isaac-sim/python.sh -m pip config set global.index-url '"${PIP_INDEX}"' 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn pypi.ngc.nvidia.com pypi.org files.pythonhosted.org 2>/dev/null || true\nRUN /isaac-sim/python.sh -m pip config set global.extra-index-url '"${PIP_EXTRA_INDEX}"' 2>/dev/null || true' "${PATCHED_DOCKERFILE}"
 
+# Patch Warp torch.py: add shortcut for PyTorch tensors (IsaacLab-Arena sometimes passes tensors to wp.to_torch)
+WARP_PATCH='RUN for WARP_TORCH in /isaac-sim/kit/python/lib/python3.12/site-packages/warp/_src/torch.py /isaac-sim/extscache/omni.warp.core-*/warp/_src/torch.py; do \
+    if [ -f "\$WARP_TORCH" ]; then \
+        sed -i "/import torch  # noqa PLC0415/a\\\    if isinstance(a, torch.Tensor):\n        return a" "\$WARP_TORCH"; \
+        echo "Patched \$WARP_TORCH"; \
+    fi; \
+done'
+# Insert after isaaclab.sh -i line (which is near the end of package installs)
+sed -i '/isaaclab.sh -i || echo/i\
+# Patch Warp torch.py for PyTorch tensor passthrough\n'"${WARP_PATCH}"'' "${PATCHED_DOCKERFILE}"
+
 echo "  Patched: ${PATCHED_DOCKERFILE}"
 
 echo ""

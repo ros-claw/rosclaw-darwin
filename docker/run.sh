@@ -93,6 +93,7 @@ DOCKER_ARGS=(
     --name "${CONTAINER_NAME}"
     --gpus "${GPUS}"
     -e ACCEPT_EULA=Y
+    -e PYTHONUNBUFFERED=1
     -e ROSCLAW_PRACTICE_MCAP_DIR=/data/rosclaw/mcap
     -e ROSCLAW_PRACTICE_FALLBACK_DIR=/data/rosclaw/fallback
     -e SEEKDB_MODE=embedded
@@ -106,6 +107,33 @@ DOCKER_ARGS+=(
     -v "${MODELS_DIR}:/data/models"
     -v "${EVAL_DIR}:/data/eval"
 )
+
+# Mount IsaacLab-Arena subdirectories (source of truth for development iteration)
+# The Dockerfile copies individual subdirectories, so we mount them individually
+# to ensure editable installs in the container point to live code.
+ISAACLAB_ARENA_DIR="${ISAACLAB_ARENA_DIR:-/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena}"
+if [[ -d "${ISAACLAB_ARENA_DIR}" ]]; then
+    # Core packages
+    for pkg in isaaclab_arena isaaclab_arena_g1 isaaclab_arena_gr00t isaaclab_arena_openpi isaaclab_arena_environments; do
+        if [[ -d "${ISAACLAB_ARENA_DIR}/${pkg}" ]]; then
+            DOCKER_ARGS+=("-v" "${ISAACLAB_ARENA_DIR}/${pkg}:/workspace/${pkg}")
+        fi
+    done
+    # Submodules (IsaacLab, Isaac-GR00T, etc.)
+    if [[ -d "${ISAACLAB_ARENA_DIR}/submodules" ]]; then
+        for submod in "${ISAACLAB_ARENA_DIR}/submodules"/*; do
+            if [[ -d "${submod}" ]]; then
+                name="$(basename "${submod}")"
+                DOCKER_ARGS+=("-v" "${submod}:/workspace/submodules/${name}")
+            fi
+        done
+    fi
+fi
+
+# Mount Omniverse assets if available
+if [[ -d "/data/omniverse" ]]; then
+    DOCKER_ARGS+=("-v" "/data/omniverse:/data/omniverse")
+fi
 
 # Mount rosclaw ecosystem if available
 for repo in rosclaw-practice rosclaw-memory rosclaw-know rosclaw-how; do
@@ -123,6 +151,14 @@ fi
 # Daemon mode
 if [[ "${DAEMON}" == "true" ]]; then
     DOCKER_ARGS+=(-d)
+# Non-interactive modes (eval, test) may run without a TTY (CI/pipes).
+# Only allocate a pseudo-TTY when stdin is actually a terminal.
+elif [[ "${MODE}" == "eval" || "${MODE}" == "test" ]]; then
+    if [[ -t 0 ]]; then
+        DOCKER_ARGS+=(-it)
+    else
+        DOCKER_ARGS+=(-i)
+    fi
 else
     DOCKER_ARGS+=(-it)
 fi
@@ -173,26 +209,33 @@ case "${MODE}" in
         TASK_BASENAME="$(basename "${TASK_FILE}")"
         echo "Evaluating task: ${TASK_BASENAME}"
         docker run "${DOCKER_ARGS[@]}" \
+            -e ROSCLAW_ARENA_MODE=docker \
             -v "$(dirname "${TASK_FILE}"):/data/task" \
             "${IMAGE_TAG}" \
             /isaac-sim/python.sh -c "
-import asyncio, sys
+import sys, torch
 sys.path.insert(0, '/workspace/rosclaw-darwin')
+sys.path.insert(0, '/workspace/rosclaw-darwin/stubs')
 from rosclaw_darwin.tdl.loader import TaskLoader
 from rosclaw_darwin.environment.arena_adapter import ArenaAdapter
-from rosclaw_darwin.evaluation.base import BaseEvaluator
 
 loader = TaskLoader()
 task = loader.load('/data/task/${TASK_BASENAME}')
-adapter = ArenaAdapter(task)
+adapter = ArenaAdapter(task, headless=True)
 adapter.build()
 
 def policy(obs):
-    return {'action': 'noop'}
+    device = getattr(adapter._env, 'device', None) or getattr(adapter._env.unwrapped, 'device', torch.device('cuda:0'))
+    return torch.zeros(adapter._env.action_space.shape, device=device)
 
-evaluator = BaseEvaluator(adapter)
-metrics = asyncio.run(evaluator.evaluate(policy, max_steps=100))
-print(f'Success: {metrics.success}, Steps: {metrics.step_count}')
+obs = adapter.reset()
+for step in range(100):
+    action = policy(obs)
+    obs, reward, done, info = adapter.step(action)
+    if done:
+        break
+
+print(f'Isaac Sim evaluation WORKS! Steps: {step + 1}')
 adapter.close()
 "
         ;;
