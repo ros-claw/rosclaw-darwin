@@ -25,11 +25,10 @@ services:
         BASE_IMAGE: rosclaw-darwin:arena-base
     image: rosclaw-darwin:latest
     container_name: rosclaw_darwin
-    runtime: nvidia
     environment:
       - ACCEPT_EULA=Y
       - NVIDIA_VISIBLE_DEVICES=all
-      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_DRIVER_CAPABILITIES=all
       - ROSCLAW_PRACTICE_MCAP_DIR=/data/rosclaw/mcap
       - ROSCLAW_PRACTICE_FALLBACK_DIR=/data/rosclaw/fallback
       - SEEKDB_MODE=embedded
