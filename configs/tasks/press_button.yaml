@@ -1,0 +1,27 @@
+id: press_button_001
+name: Press Button
+version: "1.0"
+description: Press the red button on the table.
+source: rosclaw-tdl
+scene: table_simple
+primitives:
+  - name: Press
+    params: {}
+    target: red_button
+objects:
+  - name: red_button
+    object_type: graspable
+    properties: {material: plastic}
+constraints:
+  - name: gentle_press
+    constraint_type: safety
+    description: Press gently
+    weight: 1.0
+eval_config:
+  max_steps: 200
+  timeout_seconds: 30.0
+  success_criteria: [button_pressed]
+  metrics: [success_rate, completion_time]
+  repetitions: 5
+tags: [table, atomic, press]
+difficulty: 1.0

@@ -21,11 +21,18 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to task YAML config (e.g., configs/tasks/pick_place_milk.yaml).",
     )
-    parser.add_argument(
+    policy_group = parser.add_mutually_exclusive_group()
+    policy_group.add_argument(
         "--policy",
         choices=["zero", "random", "heuristic"],
         default="zero",
-        help="Built-in policy to evaluate.",
+        help="Built-in policy to evaluate (default: zero).",
+    )
+    policy_group.add_argument(
+        "--policy-module",
+        dest="policy_module",
+        default=None,
+        help="Import path to external policy function: 'path/to/module.py:function_name'.",
     )
     parser.add_argument(
         "--max-steps",
@@ -90,6 +97,44 @@ def _make_random_policy(action_shape, device, scale: float = 0.2):
         return torch.clamp(torch.randn(action_shape, device=device) * scale, -0.5, 0.5)
 
     return policy
+
+
+def _load_external_policy(spec: str):
+    """Load a policy function from 'path/to/module.py:function_name'.
+
+    The policy function signature must be:
+        fn(obs: dict[str, Any]) -> action (torch.Tensor | np.ndarray | dict)
+    """
+    import importlib.util
+    import os
+
+    if ":" not in spec:
+        print(f"Error: --policy-module must be 'path:function_name', got: {spec}", file=sys.stderr)
+        sys.exit(1)
+
+    module_path, fn_name = spec.rsplit(":", 1)
+    module_path = os.path.abspath(module_path)
+    if not os.path.exists(module_path):
+        print(f"Error: policy module not found: {module_path}", file=sys.stderr)
+        sys.exit(1)
+
+    spec_obj = importlib.util.spec_from_file_location("_external_policy", module_path)
+    if spec_obj is None or spec_obj.loader is None:
+        print(f"Error: cannot load module: {module_path}", file=sys.stderr)
+        sys.exit(1)
+
+    mod = importlib.util.module_from_spec(spec_obj)
+    spec_obj.loader.exec_module(mod)
+    if not hasattr(mod, fn_name):
+        print(f"Error: function '{fn_name}' not found in {module_path}", file=sys.stderr)
+        sys.exit(1)
+
+    fn = getattr(mod, fn_name)
+    if not callable(fn):
+        print(f"Error: '{fn_name}' is not callable", file=sys.stderr)
+        sys.exit(1)
+
+    return fn
 
 
 def _make_heuristic_policy(action_shape, device):
@@ -161,13 +206,17 @@ def main():
     print(f"  Device:  {device}")
 
     # Select policy
-    policy_map = {
-        "zero": _make_zero_policy(action_shape, device),
-        "random": _make_random_policy(action_shape, device),
-        "heuristic": _make_heuristic_policy(action_shape, device),
-    }
-    policy = policy_map[args.policy]
-    print(f"\n[DarwinEval] Policy: {args.policy}")
+    if args.policy_module:
+        policy = _load_external_policy(args.policy_module)
+        print(f"\n[DarwinEval] Policy: external ({args.policy_module})")
+    else:
+        policy_map = {
+            "zero": _make_zero_policy(action_shape, device),
+            "random": _make_random_policy(action_shape, device),
+            "heuristic": _make_heuristic_policy(action_shape, device),
+        }
+        policy = policy_map[args.policy]
+        print(f"\n[DarwinEval] Policy: {args.policy}")
     print(f"[DarwinEval] Repetitions: {args.repetitions}")
     if args.max_steps:
         print(f"[DarwinEval] Max steps override: {args.max_steps}")
@@ -183,7 +232,8 @@ def main():
     print(f"{'=' * 60}")
     print("[DarwinEval] Results:")
     for i, m in enumerate(results):
-        print(f"  Episode {i + 1}: success={m.success}  steps={m.step_count}  reward={m.total_reward:.4f}  time={m.completion_time:.3f}s")
+        reward = m.info.get("total_reward", 0.0)
+        print(f"  Episode {i + 1}: success={m.success}  steps={m.step_count}  reward={reward:.4f}  time={m.completion_time:.3f}s")
 
     agg = evaluator.aggregate()
     print(f"\n  Aggregated:")

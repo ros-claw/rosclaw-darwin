@@ -1,0 +1,27 @@
+id: goal_pose_001
+name: Goal Pose
+version: "1.0"
+description: Move the cube to the target pose.
+source: rosclaw-tdl
+scene: table_simple
+primitives:
+  - name: Orient
+    params: {}
+    target: cube
+objects:
+  - name: cube
+    object_type: graspable
+    properties: {material: plastic}
+constraints:
+  - name: no_rotation
+    constraint_type: safety
+    description: Keep orientation stable
+    weight: 1.0
+eval_config:
+  max_steps: 300
+  timeout_seconds: 45.0
+  success_criteria: [pose_reached]
+  metrics: [success_rate, completion_time]
+  repetitions: 5
+tags: [table, atomic, pose]
+difficulty: 1.0

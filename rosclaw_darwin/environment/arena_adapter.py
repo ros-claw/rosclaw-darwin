@@ -337,7 +337,7 @@ class _ArenaComponentMapper:
             lift_obj.set_initial_pose(Pose(position_xyz=(0.1, 0.0, 0.05)))
 
         return LiftObjectTask(
-            object_to_lift=lift_obj,
+            lift_object=lift_obj,
             background_scene=background,
             episode_length_s=self.task.eval_config.timeout_seconds,
             task_description=self.task.description or None,
@@ -353,8 +353,7 @@ class _ArenaComponentMapper:
             target.set_initial_pose(Pose(position_xyz=(0.1, 0.0, 0.05)))
 
         return GoalPoseTask(
-            object_to_pose=target,
-            background_scene=background,
+            object=target,
             episode_length_s=self.task.eval_config.timeout_seconds,
             task_description=self.task.description or None,
         )
@@ -395,8 +394,7 @@ class _ArenaComponentMapper:
         if target is None:
             target = arena_objects[0] if arena_objects else background
         return PressButtonTask(
-            button=target,
-            background_scene=background,
+            pressable_object=target,
             episode_length_s=self.task.eval_config.timeout_seconds,
             task_description=self.task.description or None,
         )
@@ -484,8 +482,11 @@ class ArenaAdapter(BaseEnvironmentAdapter):
     def _detect_mode() -> str:
         import os
 
-        if os.environ.get("ROSCLAW_ARENA_MODE") == "docker":
+        mode = os.environ.get("ROSCLAW_ARENA_MODE", "")
+        if mode == "docker":
             return "docker"
+        if mode == "mock":
+            return "mock"
 
         try:
             import isaaclab_arena  # noqa: F401
@@ -816,6 +817,10 @@ class _MockArenaEnv:
         self.task = task
         self._step = 0
         self._max_steps = task.eval_config.max_steps
+        # Gym-like action_space for policy shape inference.
+        import gymnasium as gym
+        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=float)
+        self.device = "cpu"
 
     def reset(self) -> dict[str, Any]:
         self._step = 0
