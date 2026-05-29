@@ -675,28 +675,108 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         result = self._env.reset()
         # IsaacLab env.reset() returns (obs, info) tuple; extract observation dict
         if isinstance(result, tuple):
-            return result[0]
-        return result
+            obs = result[0]
+        else:
+            obs = result
+        return self._normalize_obs(obs)
 
-    def step(self, action: Any) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
+    def step(self, action: Any) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         if self._env is None:
             raise RuntimeError("Environment not built. Call build() first.")
         self._step_count += 1
-        # Normalize action: dict (from policy/mock) -> zero tensor for Arena envs
-        if isinstance(action, dict):
-            import torch
-            device = getattr(
-                self._env, "device", None
-            ) or getattr(self._env.unwrapped, "device", torch.device("cuda:0"))
-            action = torch.zeros(self._env.action_space.shape, device=device)
+        action = self._normalize_action(action)
         result = self._env.step(action)
         # Gymnasium >= 0.26 returns (obs, reward, terminated, truncated, info)
         if len(result) == 5:
             obs, reward, terminated, truncated, info = result
-            done = terminated or truncated
-            return obs, reward, done, info
-        # Legacy 4-tuple return
+        else:
+            obs, reward, terminated, info = result
+            truncated = False
+        return self._normalize_obs(obs), float(reward), bool(terminated), bool(truncated), info
+
+    # ------------------------------------------------------------------
+    # Normalization helpers
+    # ------------------------------------------------------------------
+
+    def _normalize_obs(self, obs: Any) -> dict[str, Any]:
+        """Normalize IsaacLab observation into a standard dict.
+
+        Standard keys:
+            eef_pos       (N, 3) or (3,)   end-effector position
+            eef_quat      (N, 4) or (4,)   end-effector quaternion (w,x,y,z)
+            gripper_pos   (N, 1) or (1,)   gripper joint positions
+            object_pos    (N, 3) or (3,)   target object position
+            target_pos    (N, 3) or (3,)   goal position (if available)
+            _full         raw IsaacLab obs (preserved for advanced use)
+        """
+        if not isinstance(obs, dict):
+            return {"raw": obs}
+
+        result: dict[str, Any] = {}
+        policy_obs = obs.get("policy", obs)
+
+        if isinstance(policy_obs, dict):
+            result["eef_pos"] = policy_obs.get("eef_pos")
+            result["eef_quat"] = policy_obs.get("eef_quat")
+            result["gripper_pos"] = policy_obs.get("gripper_pos")
+            result["object_pos"] = policy_obs.get("object_pos")
+            result["target_pos"] = policy_obs.get("target_pos")
+        else:
+            result["policy"] = policy_obs
+
+        result["_full"] = obs
         return result
+
+    def _normalize_action(self, action: Any) -> Any:
+        """Convert various action formats to Arena-compatible torch.Tensor.
+
+        Supported formats:
+            - torch.Tensor   -> passed through
+            - numpy.ndarray  -> converted to tensor on env device
+            - dict           -> mapped to tensor using known keys
+                {"x": float, "y": float, "z": float, "qw/qx/qy/qz": float, "gripper": float}
+                or {"0": float, "1": float, ...} for action indices
+        """
+        import torch
+        import numpy as np
+
+        if isinstance(action, torch.Tensor):
+            return action
+        if isinstance(action, np.ndarray):
+            device = getattr(self._env, "device", None) or getattr(
+                self._env.unwrapped, "device", torch.device("cuda:0")
+            )
+            return torch.from_numpy(action).to(device)
+        if isinstance(action, dict):
+            device = getattr(self._env, "device", None) or getattr(
+                self._env.unwrapped, "device", torch.device("cuda:0")
+            )
+            action_shape = self._env.action_space.shape
+            tensor = torch.zeros(action_shape, device=device)
+            for key, value in action.items():
+                v = float(value)
+                if key == "x" or key == "pos_x":
+                    tensor[..., 0] = v
+                elif key == "y" or key == "pos_y":
+                    tensor[..., 1] = v
+                elif key == "z" or key == "pos_z":
+                    tensor[..., 2] = v
+                elif key == "qw":
+                    tensor[..., 3] = v
+                elif key == "qx":
+                    tensor[..., 4] = v
+                elif key == "qy":
+                    tensor[..., 5] = v
+                elif key == "qz":
+                    tensor[..., 6] = v
+                elif key == "gripper":
+                    tensor[..., -1] = v
+                elif isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
+                    idx = int(key)
+                    if 0 <= idx < action_shape[-1]:
+                        tensor[..., idx] = v
+            return tensor
+        return action
 
     def close(self) -> None:
         if self._env is not None:
@@ -741,13 +821,13 @@ class _MockArenaEnv:
         self._step = 0
         return {"observation": "mock_reset", "task_id": self.task.id}
 
-    def step(self, action: dict[str, Any]) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
+    def step(self, action: Any) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         self._step += 1
         terminated = self._step >= self._max_steps
         reward = 1.0 if terminated else 0.0
         info = {"step": self._step, "mock": True}
         obs = {"observation": f"mock_step_{self._step}", "action": action}
-        return obs, reward, terminated, info
+        return obs, reward, terminated, False, info
 
     def close(self) -> None:
         pass

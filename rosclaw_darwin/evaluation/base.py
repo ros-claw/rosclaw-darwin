@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 from typing import Any, Callable
@@ -19,15 +18,15 @@ class BaseEvaluator:
         self.adapter = adapter
         self.results: list[EvaluationMetrics] = []
 
-    async def evaluate(
+    def evaluate(
         self,
-        policy: Callable[[dict[str, Any]], dict[str, Any]],
+        policy: Callable[[dict[str, Any]], Any],
         max_steps: int | None = None,
     ) -> EvaluationMetrics:
         """Evaluate one episode.
 
         Args:
-            policy: Callable(obs) -> action dict.
+            policy: Callable(obs) -> action (dict, tensor, or array).
             max_steps: Override the task's max_steps if provided.
         """
         if not self.adapter.is_built:
@@ -43,7 +42,7 @@ class BaseEvaluator:
 
         for step in range(limit):
             action = policy(obs)
-            obs, reward, terminated, info = self.adapter.step(action)
+            obs, reward, terminated, truncated, info = self.adapter.step(action)
 
             trajectory.append({
                 "step": step,
@@ -53,7 +52,7 @@ class BaseEvaluator:
                 "info": info,
             })
 
-            if terminated:
+            if terminated or truncated:
                 success = info.get("success", reward > 0.9)
                 break
 
@@ -63,15 +62,15 @@ class BaseEvaluator:
         self.results.append(metrics)
         return metrics
 
-    async def evaluate_repeated(
+    def evaluate_repeated(
         self,
-        policy: Callable[[dict[str, Any]], dict[str, Any]],
+        policy: Callable[[dict[str, Any]], Any],
         n: int = 1,
     ) -> list[EvaluationMetrics]:
         """Run n independent episodes and return all metrics."""
         out: list[EvaluationMetrics] = []
         for _ in range(n):
-            m = await self.evaluate(policy)
+            m = self.evaluate(policy)
             out.append(m)
         return out
 
@@ -107,29 +106,31 @@ class DarwinEvaluator(BaseEvaluator):
         self.memory_hook = memory_hook
         self.session_id = f"darwin_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
-    async def evaluate(
+    def evaluate(
         self,
-        policy: Callable[[dict[str, Any]], dict[str, Any]],
+        policy: Callable[[dict[str, Any]], Any],
         max_steps: int | None = None,
     ) -> EvaluationMetrics:
         """Evaluate with practice capture and memory integration."""
-        metrics = await super().evaluate(policy, max_steps=max_steps)
+        metrics = super().evaluate(policy, max_steps=max_steps)
 
         # Trigger practice capture if available
         if self.practice_hook:
-            await asyncio.to_thread(
-                self.practice_hook,
-                session_id=self.session_id,
-                task_id=self.adapter.task.id,
-                metrics=metrics.to_dict(),
-            )
+            try:
+                self.practice_hook(
+                    session_id=self.session_id,
+                    task_id=self.adapter.task.id,
+                    metrics=metrics.to_dict(),
+                )
+            except Exception:
+                pass
 
         # Query memory for related past experiences
         if self.memory_hook:
-            memories = await asyncio.to_thread(
-                self.memory_hook,
-                query_text=self.adapter.task.id,
-            )
-            metrics.info["related_memories"] = memories
+            try:
+                memories = self.memory_hook(query_text=self.adapter.task.id)
+                metrics.info["related_memories"] = memories
+            except Exception:
+                pass
 
         return metrics

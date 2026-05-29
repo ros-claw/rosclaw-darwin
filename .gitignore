@@ -7,3 +7,5 @@ __pycache__/
 *.log
 darwin_results/
 *.mcap
+data/
+*.db

@@ -31,11 +31,14 @@ class BaseEnvironmentAdapter(ABC):
         """Reset the environment; return initial observation."""
 
     @abstractmethod
-    def step(self, action: dict[str, Any]) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
+    def step(self, action: Any) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         """Execute one action.
 
+        Args:
+            action: Raw action from policy (dict, tensor, or array).
+
         Returns:
-            observation, reward, terminated, info
+            observation, reward, terminated, truncated, info
         """
 
     @abstractmethod
