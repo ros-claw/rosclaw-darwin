@@ -824,14 +824,85 @@ class _MockArenaEnv:
 
     def reset(self) -> dict[str, Any]:
         self._step = 0
-        return {"observation": "mock_reset", "task_id": self.task.id}
+        self._grasped = False
+        # Return standardized observation so policies can be tested in mock mode.
+        import numpy as np
+
+        self._eef_pos = np.array([0.35, 0.0, 0.25], dtype=float)
+        self._object_pos = np.array([0.35, 0.0, 0.07], dtype=float)
+        self._gripper_pos = np.array([0.04], dtype=float)
+        self._eef_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+        return {
+            "policy": {
+                "eef_pos": self._eef_pos,
+                "eef_quat": self._eef_quat,
+                "gripper_pos": self._gripper_pos,
+                "object_pos": self._object_pos,
+            },
+            "task_id": self.task.id,
+        }
 
     def step(self, action: Any) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         self._step += 1
-        terminated = self._step >= self._max_steps
-        reward = 1.0 if terminated else 0.0
-        info = {"step": self._step, "mock": True}
-        obs = {"observation": f"mock_step_{self._step}", "action": action}
+        import numpy as np
+        import torch
+
+        # Parse action to get target position and gripper command
+        target_pos = None
+        gripper_cmd = 1.0
+
+        if isinstance(action, dict):
+            target_pos = np.array([
+                action.get("x", self._eef_pos[0]),
+                action.get("y", self._eef_pos[1]),
+                action.get("z", self._eef_pos[2]),
+            ], dtype=float)
+            gripper_cmd = action.get("gripper", 1.0)
+        elif isinstance(action, torch.Tensor) or hasattr(action, "numpy"):
+            a = action.detach().cpu().numpy() if hasattr(action, "detach") else np.array(action)
+            if a.ndim > 1:
+                a = a[0]
+            if len(a) >= 3:
+                target_pos = np.array([float(a[0]), float(a[1]), float(a[2])], dtype=float)
+            if len(a) > 7:
+                gripper_cmd = float(a[7])
+
+        # Move eef toward target (proportional control, slower for realistic IK)
+        if target_pos is not None:
+            error = target_pos - self._eef_pos
+            self._eef_pos += error * 0.08  # 8% per step toward target
+
+        # Update gripper
+        if gripper_cmd < 0:
+            self._gripper_pos[0] = max(self._gripper_pos[0] - 0.008, 0.0)
+        else:
+            self._gripper_pos[0] = min(self._gripper_pos[0] + 0.008, 0.04)
+
+        # Sticky grasp: once grasped, object follows eef until gripper opens
+        dist = np.linalg.norm(self._eef_pos - self._object_pos)
+        if not self._grasped:
+            self._grasped = dist < 0.06 and self._gripper_pos[0] < 0.02
+        else:
+            # Release if gripper opens significantly
+            if self._gripper_pos[0] > 0.02:
+                self._grasped = False
+        if self._grasped:
+            self._object_pos = self._eef_pos.copy() + np.array([0.0, 0.0, -0.05])
+
+        # Success: object lifted above table
+        success = self._grasped and self._object_pos[2] > 0.15
+        terminated = self._step >= self._max_steps or success
+        reward = 10.0 if success else (1.0 if self._grasped else max(0.0, 0.5 - dist))
+        info = {"step": self._step, "mock": True, "success": success, "grasped": self._grasped}
+        obs = {
+            "policy": {
+                "eef_pos": self._eef_pos.copy(),
+                "eef_quat": self._eef_quat.copy(),
+                "gripper_pos": self._gripper_pos.copy(),
+                "object_pos": self._object_pos.copy(),
+            },
+            "task_id": self.task.id,
+        }
         return obs, reward, terminated, False, info
 
     def close(self) -> None:
