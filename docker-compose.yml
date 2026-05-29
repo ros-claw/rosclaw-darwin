@@ -36,6 +36,8 @@ services:
     volumes:
       # rosclaw-darwin source (live reload during development)
       - .:/workspace/rosclaw-darwin
+      # Omniverse assets (Isaac Sim Nucleus)
+      - /data/omniverse:/data/omniverse:ro
       # Data directories
       - ${ROSCLAW_DATASETS:-~/datasets}:/data/datasets
       - ${ROSCLAW_MODELS:-~/models}:/data/models
