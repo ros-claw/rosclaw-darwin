@@ -24,7 +24,7 @@ def _build_parser() -> argparse.ArgumentParser:
     policy_group = parser.add_mutually_exclusive_group()
     policy_group.add_argument(
         "--policy",
-        choices=["zero", "random", "heuristic"],
+        choices=["zero", "random", "heuristic", "approach_grasp_lift"],
         default="zero",
         help="Built-in policy to evaluate (default: zero).",
     )
@@ -67,6 +67,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--device",
         default="cuda:0",
         help="Torch device for simulation.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print per-step state during evaluation.",
     )
     return parser
 
@@ -164,6 +170,13 @@ def _make_heuristic_policy(action_shape, device):
     return policy
 
 
+def _make_approach_grasp_lift_policy(action_shape, device):
+    """Generic approach-grasp-lift-place heuristic."""
+    from rosclaw_darwin.policies.heuristic import ApproachGraspLiftPolicy
+
+    return ApproachGraspLiftPolicy(action_shape, device=device)
+
+
 def main():
     parser = _build_parser()
     args = parser.parse_args()
@@ -214,12 +227,30 @@ def main():
             "zero": _make_zero_policy(action_shape, device),
             "random": _make_random_policy(action_shape, device),
             "heuristic": _make_heuristic_policy(action_shape, device),
+            "approach_grasp_lift": _make_approach_grasp_lift_policy(action_shape, device),
         }
         policy = policy_map[args.policy]
         print(f"\n[DarwinEval] Policy: {args.policy}")
     print(f"[DarwinEval] Repetitions: {args.repetitions}")
     if args.max_steps:
         print(f"[DarwinEval] Max steps override: {args.max_steps}")
+
+    # Wrap policy with verbose logging if requested
+    if args.verbose:
+        _orig_policy = policy
+
+        def _verbose_policy(obs):
+            action = _orig_policy(obs)
+            eef = obs.get("eef_pos")
+            obj = obs.get("object_pos")
+            grip = obs.get("gripper_pos")
+            eef_str = f"({eef[0]:.3f},{eef[1]:.3f},{eef[2]:.3f})" if eef is not None else "N/A"
+            obj_str = f"({obj[0]:.3f},{obj[1]:.3f},{obj[2]:.3f})" if obj is not None else "N/A"
+            grip_str = f"{grip[0]:.4f}" if grip is not None else "N/A"
+            print(f"    eef={eef_str}  obj={obj_str}  grip={grip_str}")
+            return action
+
+        policy = _verbose_policy
 
     # Run evaluation
     from rosclaw_darwin.evaluation.base import DarwinEvaluator
