@@ -133,6 +133,11 @@ class _ArenaComponentMapper:
         except (KeyError, ValueError, Exception):
             background = registry.get_asset_by_name("procedural_table")()
 
+        # Patch object_min_z so objects have time to settle before triggering
+        # object_dropped (default 0.0 causes immediate failure on penetration).
+        if hasattr(background, "object_min_z"):
+            background.object_min_z = -0.2
+
         # --- Lighting ---
         try:
             light = registry.get_asset_by_name("light")()
@@ -159,12 +164,16 @@ class _ArenaComponentMapper:
 
             _procedural_cls._generate_rigid_cfg = _patched_generate
 
+        # Place objects closer to the robot's initial reach (x~0.45) so the
+        # end-effector doesn't need to travel far horizontally.
         for idx, obj in enumerate(self.task.objects):
             # Each object needs a unique prim path to avoid USD stage collisions.
             prim_path = f"{{ENV_REGEX_NS}}/{obj.name}"
             inst = _procedural_cls(instance_name=obj.name, prim_path=prim_path)
             from isaaclab_arena.utils.pose import Pose
-            inst.set_initial_pose(Pose(position_xyz=(0.1 + idx * 0.05, 0.0, 0.05)))
+            # z=0.07 places object bottom at table top (z=0.02) for procedural cube
+            # with half-height 0.05. Previous z=0.05 caused object to spawn inside table.
+            inst.set_initial_pose(Pose(position_xyz=(0.35 + idx * 0.05, 0.0, 0.07)))
             arena_objects.append(inst)
 
         # If no objects were mapped at all, add a procedural cube so that
@@ -172,7 +181,7 @@ class _ArenaComponentMapper:
         if not arena_objects:
             inst = _procedural_cls(instance_name="object", prim_path="{ENV_REGEX_NS}/object")
             from isaaclab_arena.utils.pose import Pose
-            inst.set_initial_pose(Pose(position_xyz=(0.1, 0.0, 0.05)))
+            inst.set_initial_pose(Pose(position_xyz=(0.35, 0.0, 0.07)))
             arena_objects.append(inst)
 
         # Procedural objects have empty usd_path; tasks like PickAndPlace
@@ -204,7 +213,31 @@ class _ArenaComponentMapper:
 
         robot = self._ROBOT_MAP.get(self.robot, "franka_ik")
         if robot == "franka_ik":
-            return FrankaIKEmbodiment()
+            embodiment = FrankaIKEmbodiment()
+            # Use IsaacLab lift-cube initial pose (elbow bent lower) instead of
+            # Arena's default upright pose, so the end-effector starts closer to
+            # tabletop objects (~z=0.5 instead of ~z=0.84).
+            embodiment.set_initial_joint_pose(
+                [0.0, -0.569, 0.0, -2.81, 0.0, 3.037, 0.741, 0.04, 0.04]
+            )
+            # Disable joint randomization for deterministic reset behaviour
+            # (random offsets cause unpredictable workspace changes).
+            if hasattr(embodiment, "event_config") and hasattr(
+                embodiment.event_config, "randomize_franka_joint_state"
+            ):
+                embodiment.event_config.randomize_franka_joint_state.params["std"] = 0.0
+            # Switch to ABSOLUTE pose mode for direct position control
+            # (relative mode causes unpredictable cross-axis coupling).
+            if hasattr(embodiment, "action_config") and hasattr(
+                embodiment.action_config, "arm_action"
+            ):
+                if hasattr(embodiment.action_config.arm_action, "controller"):
+                    embodiment.action_config.arm_action.controller.use_relative_mode = False
+                # Scale=0.5 halves position targets and corrupts quaternions in
+                # absolute mode. Set to 1.0 so action = actual target pose.
+                if hasattr(embodiment.action_config.arm_action, "scale"):
+                    embodiment.action_config.arm_action.scale = 1.0
+            return embodiment
         if robot == "franka_joint":
             from isaaclab_arena.embodiments.franka.franka import FrankaJointEmbodiment
             return FrankaJointEmbodiment()
@@ -269,12 +302,19 @@ class _ArenaComponentMapper:
                 pick_obj = registry.get_asset_by_name("procedural_cube")()
 
         if place_obj is None:
+            # Try to find a fridge/container-like object in arena_objects as destination
+            for obj in arena_objects:
+                obj_name = getattr(obj, "name", "")
+                if obj_name in ("fridge", "container", "bin"):
+                    place_obj = obj
+                    break
+        if place_obj is None:
             # Default destination: the background surface.
             place_obj = background
 
         # Set sensible initial poses if not already set.
         if hasattr(pick_obj, "set_initial_pose") and pick_obj.initial_pose is None:
-            pick_obj.set_initial_pose(Pose(position_xyz=(0.1, 0.0, 0.05)))
+            pick_obj.set_initial_pose(Pose(position_xyz=(0.35, 0.0, 0.05)))
 
         return PickAndPlaceTask(
             pick_up_object=pick_obj,
