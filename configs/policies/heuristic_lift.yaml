@@ -1,0 +1,4 @@
+policy_id: heuristic_lift
+type: heuristic_lift
+strength: 0.6
+memory_bonus: 0.0

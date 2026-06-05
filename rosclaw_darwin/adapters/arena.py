@@ -937,19 +937,58 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             elif any(p.name.lower() in ("sort",) for p in self.task.primitives):
                 env_name = "sorting"
 
-            job = {
-                "name": self.task.id,
-                "arena_env_args": {
-                    "environment": env_name,
-                    "object": obj_name,
-                    "embodiment": robot_name,
-                },
-                "num_steps": self.task.eval.max_steps or 50,
-                "policy_type": policy_config.get("policy_type", "zero_action"),
-                "policy_config_dict": policy_config.get("policy_config_dict", {}),
-                "headless": self.headless,
-                "timeout_seconds": 1200,
-            }
+            # Episode-based evaluation when episodes is specified;
+            # otherwise fall back to step-based for quick smoke tests.
+            policy_type = policy_config.get("policy_type") or policy_config.get("type", "zero_action")
+            # Map short policy names to full module paths for dynamic import in container.
+            # heuristic_policy.py is mounted at /workspace/data/heuristic_policy.py and
+            # /workspace/data is on sys.path inside the container.
+            if policy_type == "heuristic_lift":
+                policy_type = "heuristic_policy.HeuristicLiftPolicy"
+            # For heuristic policies use step-based rollout so we can observe
+            # behaviour across multiple steps even if episodes end early.
+            if policy_type == "heuristic_policy.HeuristicLiftPolicy":
+                job = {
+                    "name": self.task.id,
+                    "arena_env_args": {
+                        "environment": env_name,
+                        "object": obj_name,
+                        "embodiment": robot_name,
+                    },
+                    "num_steps": 200,
+                    "policy_type": policy_type,
+                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "headless": self.headless,
+                    "timeout_seconds": 1200,
+                }
+            elif eps and eps > 0:
+                job = {
+                    "name": self.task.id,
+                    "arena_env_args": {
+                        "environment": env_name,
+                        "object": obj_name,
+                        "embodiment": robot_name,
+                    },
+                    "num_episodes": eps,
+                    "policy_type": policy_type,
+                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "headless": self.headless,
+                    "timeout_seconds": 1200,
+                }
+            else:
+                job = {
+                    "name": self.task.id,
+                    "arena_env_args": {
+                        "environment": env_name,
+                        "object": obj_name,
+                        "embodiment": robot_name,
+                    },
+                    "num_steps": self.task.eval.max_steps or 50,
+                    "policy_type": policy_type,
+                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "headless": self.headless,
+                    "timeout_seconds": 1200,
+                }
             # Merge native config from task provenance if available
             native_config = {}
             if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
@@ -973,8 +1012,19 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 task_id=self.task.id,
                 policy_id=policy_config.get("policy_id", "unknown"),
             )
-            # Synthetic metrics: Arena zero_action + num_steps does not produce
-            # structured metrics, but we know the job config and completion status.
+            # Normalize Arena metrics keys so CLI/dashboard can read standard names.
+            if result.metrics:
+                normalized: dict[str, float] = {}
+                for k, v in result.metrics.items():
+                    if isinstance(v, (int, float)):
+                        if "success_rate" in k:
+                            normalized["success_rate"] = float(v)
+                        if "num_episodes" in k:
+                            normalized["num_episodes"] = float(v)
+                        if "num_steps" in k:
+                            normalized["num_steps"] = float(v)
+                result.metrics.update(normalized)
+            # Synthetic metrics fallback for step-based runs without structured output.
             if result.status == "completed" and not result.metrics:
                 result.metrics = {
                     "num_steps": float(job.get("num_steps", 0)),

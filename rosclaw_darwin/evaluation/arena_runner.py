@@ -147,6 +147,10 @@ class ArenaRunner:
             config_path = tmp_path / "eval_jobs.json"
             config_path.write_text(json.dumps(eval_config, indent=2))
 
+            # Create metrics output file (shared with container via bind mount)
+            metrics_path = tmp_path / "metrics_output.json"
+            metrics_path.write_text("{}")
+
             # Build docker run command
             site_packages = "/isaac-sim/kit/python/lib/python3.12/site-packages"
             cmd = [
@@ -155,6 +159,8 @@ class ArenaRunner:
                 "--entrypoint", "",
                 # Mount eval config
                 "-v", f"{config_path}:/workspace/data/eval_jobs.json",
+                # Mount metrics output file
+                "-v", f"{metrics_path}:/workspace/data/metrics_output.json",
                 # Mount asset root (host local assets -> container)
                 "-v", "/data/omniverse/Assets/Isaac/5.1:/data/omniverse/Assets/Isaac/5.1",
                 # Mount kit patches (local asset root instead of HTTPS)
@@ -171,6 +177,10 @@ class ArenaRunner:
                 # Mount bootstrap
                 "-v", f"{DEPS_DIR / 'run_eval.py'}:/workspace/data/run_eval.py",
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
+                # Mount heuristic policy (can be referenced by full module path)
+                "-v", f"{DEPS_DIR / 'heuristic_policy.py'}:/workspace/data/heuristic_policy.py",
+                # Mount patched lift environment (uses procedural_table instead of table)
+                "-v", f"{DEPS_DIR / 'lift_object_environment.py'}:/workspace/isaaclab_arena_environments/lift_object_environment.py",
                 "-w", "/workspace",
                 self.docker_image,
                 "/isaac-sim/python.sh", "/workspace/data/run_eval.py",
@@ -197,6 +207,16 @@ class ArenaRunner:
 
             finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             metrics = self._parse_stdout(proc.stdout)
+
+            # Fallback: read metrics from shared file if stdout parsing failed
+            # (IsaacSim may call os._exit() which skips Python finally blocks).
+            if not metrics and metrics_path.exists():
+                try:
+                    file_data = json.loads(metrics_path.read_text())
+                    if isinstance(file_data, dict):
+                        metrics = {k: float(v) if isinstance(v, (int, float, bool)) else v for k, v in file_data.items() if isinstance(v, (int, float, bool, str))}
+                except (json.JSONDecodeError, ValueError):
+                    pass
 
             # Determine status
             status = "failed"
@@ -252,6 +272,26 @@ class ArenaRunner:
     @staticmethod
     def _parse_stdout(stdout: str) -> dict[str, float]:
         metrics: dict[str, float] = {}
+        # 1. Try to extract JSON wrapped in <<<ROSCLAW_ARENA_METRICS>>> markers
+        marker = "<<<ROSCLAW_ARENA_METRICS>>>"
+        if marker in stdout:
+            parts = stdout.split(marker)
+            if len(parts) >= 3:
+                try:
+                    data = json.loads(parts[1].strip())
+                    if isinstance(data, dict):
+                        for k, v in data.items():
+                            if isinstance(v, (int, float, bool)):
+                                metrics[k] = float(v)
+                            elif isinstance(v, dict):
+                                for sk, sv in v.items():
+                                    if isinstance(sv, (int, float, bool)):
+                                        metrics[f"{k}_{sk}"] = float(sv)
+                        return metrics
+                except json.JSONDecodeError:
+                    pass
+
+        # 2. Fallback: scan for any JSON lines
         for line in stdout.splitlines():
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):

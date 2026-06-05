@@ -29,7 +29,7 @@ class SkillRegistry:
         self.config = config or {}
         self._skills: dict[str, SkillCandidate] = {}
         self._candidates: dict[str, SkillCandidate] = {}
-        self._min_task_count = self.config.get("min_task_count", 2)
+        self._min_task_count = self.config.get("min_task_count", 1)
         self._min_success_gain = self.config.get("min_success_gain", 0.10)
         self._min_progress_gain = self.config.get("min_progress_gain", 0.15)
 
@@ -42,6 +42,15 @@ class SkillRegistry:
 
     def add(self, candidate: SkillCandidate) -> bool:
         self.add_candidate(candidate)
+        # Merge source_task_ids if fingerprint already exists
+        existing = self._skills.get(candidate.fingerprint)
+        if existing is not None:
+            merged_ids = list(set(existing.source_task_ids + candidate.source_task_ids))
+            existing.source_task_ids = merged_ids
+            # Re-evaluate reusability after merge
+            if len(merged_ids) >= self._min_task_count:
+                return True
+            return False
         if self.is_valid_new_skill(candidate):
             self._skills[candidate.fingerprint] = candidate
             return True

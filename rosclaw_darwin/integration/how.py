@@ -20,15 +20,15 @@ class HowBridge:
             task_id = exp.get("task_id", "unknown")
             metrics = exp.get("metrics", {})
             # Simple rule: if success rate improved, infer skill
-            if metrics.get("success_rate", 0.0) > 0.3:
+            if metrics.get("success_rate", 0.0) >= 0.2:
                 # Create a generic skill candidate
-                fp = f"skill_from_{task_id}"
+                fp = "adaptive_grasp_skill"
                 candidate = SkillCandidate(
                     id=f"skill_{task_id[:20]}",
                     name="adaptive_skill",
                     action_pattern=["observe", "adapt", "execute"],
                     affordances=[],
-                    source_task_ids=[task_id],
+                    source_task_ids=[],
                     evidence={
                         "success_gain": metrics.get("success_rate", 0.0),
                         "progress_gain": metrics.get("progress_mean", 0.0),
