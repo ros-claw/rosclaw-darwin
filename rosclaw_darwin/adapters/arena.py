@@ -485,6 +485,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
     @staticmethod
     def _detect_mode() -> str:
         import os
+        import subprocess
 
         mode = os.environ.get("ROSCLAW_ARENA_MODE", "")
         if mode == "docker":
@@ -496,6 +497,19 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             import isaaclab_arena  # noqa: F401
             return "real"
         except ImportError:
+            pass
+
+        # Auto-detect Docker mode if arena-base image exists
+        try:
+            result = subprocess.run(
+                ["docker", "images", "-q", "rosclaw-darwin:arena-base"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return "docker"
+        except Exception:
             pass
 
         return "mock"
@@ -907,7 +921,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         if self._mode == "docker":
             runner = ArenaRunner(mode="docker")
             # Map ROSClaw task to Arena eval job format
-            obj_name = self.task.objects[0].name if self.task.objects else "dex_cube"
+            raw_obj = self.task.objects[0].name if self.task.objects else "dex_cube"
+            obj_name = _ArenaComponentMapper._OBJECT_MAP.get(raw_obj, raw_obj)
             # Use the same robot→embodiment mapping that _ArenaComponentMapper uses
             robot_name = _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot)
             env_name = "lift_object"
