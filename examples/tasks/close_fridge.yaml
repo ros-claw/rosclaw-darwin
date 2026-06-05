@@ -1,0 +1,46 @@
+id: darwin_kitchen_close_fridge_v001
+name: Close fridge
+description: Close the refrigerator door.
+source: native
+domain: kitchen
+horizon: atomic
+
+scene:
+  name: kitchen
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: fridge
+    category: appliance
+    affordances: [openable, closeable, container, articulated]
+
+primitives:
+  - name: close
+    args:
+      target: fridge
+    postconditions:
+      - is_closed(fridge)
+
+eval:
+  success_conditions:
+    - is_closed(fridge)
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 500
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - object_position
+  difficulty: 1
+
+tags:
+  - kitchen
+  - closeable

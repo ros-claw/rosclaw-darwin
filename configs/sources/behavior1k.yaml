@@ -1,0 +1,4 @@
+name: behavior1k
+repo_env: BEHAVIOR1K_REPO
+default_path: /data/repos/BEHAVIOR-1K
+semantic_only: true

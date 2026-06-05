@@ -1,0 +1,43 @@
+id: darwin_mvp_04_press_button
+name: Press Button
+description: Press Button task.
+source: native
+domain: manipulation
+horizon: atomic
+
+scene:
+  name: default
+  domain: manipulation
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: button
+    affordances: [pressable]
+
+primitives:
+  - name: press
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - manipulation

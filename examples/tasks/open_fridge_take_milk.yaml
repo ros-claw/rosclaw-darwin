@@ -1,0 +1,95 @@
+id: darwin_kitchen_open_fridge_take_milk_v001
+name: Open fridge and take milk
+description: Navigate to a fridge, open it, grasp milk, and place milk on table.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: kitchen
+  domain: kitchen
+  layout: random
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+  enable_cameras: true
+
+objects:
+  - name: fridge
+    category: appliance
+    affordances: [openable, closeable, container, articulated]
+  - name: milk
+    category: grocery
+    affordances: [graspable, movable]
+  - name: table
+    category: furniture
+    affordances: [surface]
+
+primitives:
+  - name: navigate_to
+    args:
+      target: fridge
+    postconditions:
+      - robot_near(fridge)
+  - name: open
+    args:
+      target: fridge
+    preconditions:
+      - robot_near(fridge)
+    postconditions:
+      - is_open(fridge)
+  - name: grasp
+    args:
+      target: milk
+    preconditions:
+      - is_open(fridge)
+    postconditions:
+      - holding(milk)
+  - name: place
+    args:
+      object: milk
+      target: table
+    preconditions:
+      - holding(milk)
+    postconditions:
+      - on(milk, table)
+
+constraints:
+  - collision_free
+  - milk_not_dropped
+  - fridge_open_angle > 60
+
+eval:
+  success_conditions:
+    - on(milk, table)
+    - is_open(fridge)
+  failure_conditions:
+    - milk_dropped
+    - robot_fallen
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+    - collision_count
+    - progress
+    - memory_improvement
+  max_steps: 2000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - object_position
+    - object_instance
+    - distractor_objects
+    - lighting
+    - instruction_variant
+    - primitive_composition
+    - difficulty_expansion
+  difficulty: 2
+
+tags:
+  - kitchen
+  - long_horizon
+  - manipulation
+  - openable

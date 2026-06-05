@@ -7,6 +7,7 @@ unit tests and development.
 
 from __future__ import annotations
 
+
 def _patch_warp_to_torch() -> None:
     """Monkey-patch Warp to_torch so it accepts PyTorch tensors (Arena sometimes passes tensors to wp.to_torch)."""
     try:
@@ -25,9 +26,12 @@ def _patch_warp_to_torch() -> None:
         pass
 
 import argparse
+from pathlib import Path
 from typing import Any
 
+from rosclaw_darwin.evaluation.result import EvaluationResult
 from rosclaw_darwin.tdl.schema import Task
+
 from .base import BaseEnvironmentAdapter
 
 
@@ -127,7 +131,7 @@ class _ArenaComponentMapper:
         # --- Background ---
         # Try the mapped scene name first; fall back to procedural_table
         # when Nucleus USD assets are not available.
-        bg_name = self._SCENE_MAP.get(self.task.scene, "procedural_table")
+        bg_name = self._SCENE_MAP.get((self.task.scene.name or self.task.scene.domain or 'default'), "procedural_table")
         try:
             background = registry.get_asset_by_name(bg_name)()
         except (KeyError, ValueError, Exception):
@@ -170,7 +174,6 @@ class _ArenaComponentMapper:
             # Each object needs a unique prim path to avoid USD stage collisions.
             prim_path = f"{{ENV_REGEX_NS}}/{obj.name}"
             inst = _procedural_cls(instance_name=obj.name, prim_path=prim_path)
-            from isaaclab_arena.utils.pose import Pose
             # z=0.07 places object bottom at table top (z=0.02) for procedural cube
             # with half-height 0.05. Previous z=0.05 caused object to spawn inside table.
             inst.set_initial_pose(Pose(position_xyz=(0.35 + idx * 0.05, 0.0, 0.07)))
@@ -320,7 +323,7 @@ class _ArenaComponentMapper:
             pick_up_object=pick_obj,
             destination_location=place_obj,
             background_scene=background,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -339,7 +342,7 @@ class _ArenaComponentMapper:
         return LiftObjectTask(
             lift_object=lift_obj,
             background_scene=background,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -354,7 +357,7 @@ class _ArenaComponentMapper:
 
         return GoalPoseTask(
             object=target,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -368,7 +371,7 @@ class _ArenaComponentMapper:
         return OpenDoorTask(
             door=target,
             background_scene=background,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -382,7 +385,7 @@ class _ArenaComponentMapper:
         return CloseDoorTask(
             door=target,
             background_scene=background,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -395,7 +398,7 @@ class _ArenaComponentMapper:
             target = arena_objects[0] if arena_objects else background
         return PressButtonTask(
             pressable_object=target,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -410,7 +413,7 @@ class _ArenaComponentMapper:
         return SortingTask(
             objects_to_sort=arena_objects,
             background_scene=background,
-            episode_length_s=self.task.eval_config.timeout_seconds,
+            episode_length_s=(self.task.eval.max_steps or 1000) * 0.05,
             task_description=self.task.description or None,
         )
 
@@ -421,18 +424,18 @@ class _ArenaComponentMapper:
     def _resolve_primitive_target(self, primitive_name: str, registry, arena_objects):
         """Find the Arena object associated with a primitive's target."""
         for p in self.task.primitives:
-            if p.name == primitive_name and p.target:
+            if p.name == primitive_name and p.args.get('target'):
                 # First try arena_objects list (already mapped).
                 for obj in arena_objects:
-                    if getattr(obj, "name", None) == p.target:
+                    if getattr(obj, "name", None) == p.args.get('target'):
                         return obj
                     # Also check against the mapped name.
-                    mapped = self._OBJECT_MAP.get(p.target, p.target)
+                    mapped = self._OBJECT_MAP.get(p.args.get('target'), p.args.get('target'))
                     if getattr(obj, "name", None) == mapped:
                         return obj
                 # Not found in arena_objects: try registry directly.
                 try:
-                    mapped = self._OBJECT_MAP.get(p.target, p.target)
+                    mapped = self._OBJECT_MAP.get(p.args.get('target'), p.args.get('target'))
                     return registry.get_asset_by_name(mapped)()
                 except (KeyError, ValueError, AssertionError, Exception):
                     pass
@@ -472,6 +475,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         super().__init__(task, **kwargs)
         self.robot = robot
         self.headless = headless
+        self._explicit_mode = mode is not None
         self._mode = mode or self._detect_mode()
         self._step_count = 0
         self._simulation_app: Any | None = None
@@ -738,8 +742,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 {"x": float, "y": float, "z": float, "qw/qx/qy/qz": float, "gripper": float}
                 or {"0": float, "1": float, ...} for action indices
         """
-        import torch
         import numpy as np
+        import torch
 
         if isinstance(action, torch.Tensor):
             return action
@@ -755,7 +759,10 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             action_shape = self._env.action_space.shape
             tensor = torch.zeros(action_shape, device=device)
             for key, value in action.items():
-                v = float(value)
+                try:
+                    v = float(value)
+                except (ValueError, TypeError):
+                    continue
                 if key == "x" or key == "pos_x":
                     tensor[..., 0] = v
                 elif key == "y" or key == "pos_y":
@@ -788,6 +795,217 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             self._simulation_app.close()
             self._simulation_app = None
 
+
+    def run_policy(
+        self,
+        policy_config: dict,
+        episodes: int | None = None,
+    ) -> EvaluationResult:
+        """Run a policy for multiple episodes via Arena."""
+        import time
+        import uuid
+
+        from rosclaw_darwin.evaluation.metrics import compute_basic_metrics
+        from rosclaw_darwin.evaluation.result import EvaluationResult
+
+        eps = episodes or self.task.eval.max_episodes or 20
+        run_id = f"arena_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+
+        # --- Handle mock / missing environment early ---
+        if self._mode == "mock" and not self._explicit_mode:
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="environment_missing",
+                metrics={},
+                metadata={"error": "Arena repo not found. Set ARENA_REPO or install IsaacLab-Arena."},
+            )
+
+        # --- dry-run for real/docker mode: skip build, generate command only ---
+        if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
+            arena_repo = self._get_arena_repo()
+            if arena_repo is None or not Path(arena_repo).exists():
+                return EvaluationResult(
+                    run_id=run_id,
+                    task_id=self.task.id,
+                    policy_id=policy_config.get("policy_id", "unknown"),
+                    adapter=self.name,
+                    status="environment_missing",
+                    metrics={},
+                    metadata={"error": "Arena repo not found. Set ARENA_REPO or install IsaacLab-Arena."},
+                )
+            from rosclaw_darwin.evaluation.arena_runner import ArenaRunner
+            runner = ArenaRunner(arena_repo=Path(arena_repo))
+            job = {
+                "num_episodes": eps,
+                "headless": self.headless,
+                "timeout_seconds": 600,
+            }
+            native_config = {}
+            if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
+                native_config = self.task.provenance.native_config or {}
+            job.update(native_config)
+            cmd = runner._build_command(job)
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="dry_run",
+                metrics={},
+                command=cmd,
+                metadata={"dry_run": True, "arena_repo": str(arena_repo), "mode": self._mode},
+            )
+
+        if self._mode == "mock":
+            if self._env is None:
+                try:
+                    self.build()
+                except Exception as exc:
+                    return EvaluationResult(
+                        run_id=run_id,
+                        task_id=self.task.id,
+                        policy_id=policy_config.get("policy_id", "unknown"),
+                        adapter=self.name,
+                        status="failed",
+                        metrics={},
+                        metadata={"error": str(exc)},
+                    )
+            results = []
+            for _ in range(eps):
+                obs = self.reset()
+                done = False
+                step = 0
+                max_steps = self.task.eval.max_steps or 1000
+                success = False
+                collisions = 0
+                while not done and step < max_steps:
+                    action = {"x": 0.0, "y": 0.0, "z": 0.0, "gripper": 1.0}
+                    obs, reward, terminated, truncated, info = self.step(action)
+                    step += 1
+                    done = terminated or truncated
+                    if info.get("collision"):
+                        collisions += 1
+                    if info.get("success") or reward > 0.9:
+                        success = True
+                results.append({"success": success, "steps": step, "collisions": collisions, "time": step * 0.05})
+            metrics = compute_basic_metrics(results)
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="completed",
+                metrics=metrics,
+            )
+
+        # --- real / docker / subprocess mode ---
+        from rosclaw_darwin.evaluation.arena_runner import ArenaRunner
+
+        if self._mode == "docker":
+            runner = ArenaRunner(mode="docker")
+            # Map ROSClaw task to Arena eval job format
+            obj_name = self.task.objects[0].name if self.task.objects else "dex_cube"
+            # Use the same robot→embodiment mapping that _ArenaComponentMapper uses
+            robot_name = _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot)
+            env_name = "lift_object"
+            if any(p.name.lower() in ("pick", "place") for p in self.task.primitives):
+                env_name = "pick_and_place"
+            elif any(p.name.lower() in ("open",) for p in self.task.primitives):
+                env_name = "open_door"
+            elif any(p.name.lower() in ("close",) for p in self.task.primitives):
+                env_name = "close_door"
+            elif any(p.name.lower() in ("press",) for p in self.task.primitives):
+                env_name = "press_button"
+            elif any(p.name.lower() in ("sort",) for p in self.task.primitives):
+                env_name = "sorting"
+
+            job = {
+                "name": self.task.id,
+                "arena_env_args": {
+                    "environment": env_name,
+                    "object": obj_name,
+                    "embodiment": robot_name,
+                },
+                "num_steps": self.task.eval.max_steps or 50,
+                "policy_type": policy_config.get("policy_type", "zero_action"),
+                "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                "headless": self.headless,
+                "timeout_seconds": 1200,
+            }
+            # Merge native config from task provenance if available
+            native_config = {}
+            if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
+                native_config = self.task.provenance.native_config or {}
+            job.update(native_config)
+
+            if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
+                return EvaluationResult(
+                    run_id=run_id,
+                    task_id=self.task.id,
+                    policy_id=policy_config.get("policy_id", "unknown"),
+                    adapter=self.name,
+                    status="dry_run",
+                    metrics={},
+                    command=["docker", "run", self.docker_image if hasattr(self, "docker_image") else "rosclaw-darwin:arena-base"],
+                    metadata={"dry_run": True, "mode": "docker"},
+                )
+
+            result = runner.run_policy_runner(
+                job=job,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+            )
+            return result
+
+        arena_repo = self._get_arena_repo()
+        if arena_repo is None or not Path(arena_repo).exists():
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="environment_missing",
+                metrics={},
+                metadata={"error": "Arena repo not found. Set ARENA_REPO or install IsaacLab-Arena."},
+            )
+
+        runner = ArenaRunner(arena_repo=Path(arena_repo))
+
+        job = {
+            "num_episodes": eps,
+            "headless": self.headless,
+            "timeout_seconds": 600,
+        }
+        # Merge native config from task provenance if available
+        native_config = {}
+        if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
+            native_config = self.task.provenance.native_config or {}
+        job.update(native_config)
+
+        # dry-run: only build and save command, do not execute
+        if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
+            cmd = runner._build_command(job)
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="dry_run",
+                metrics={},
+                command=cmd,
+                metadata={"dry_run": True, "arena_repo": str(arena_repo)},
+            )
+
+        result = runner.run_policy_runner(
+            job=job,
+            task_id=self.task.id,
+            policy_id=policy_config.get("policy_id", "unknown"),
+        )
+        return result
+
     def get_state(self) -> dict[str, Any]:
         return {
             **super().get_state(),
@@ -795,6 +1013,10 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             "robot": self.robot,
             "step_count": self._step_count,
         }
+
+    def _get_arena_repo(self) -> str | None:
+        import os
+        return os.environ.get("ARENA_REPO")
 
     @classmethod
     def create_in_container(
@@ -816,7 +1038,7 @@ class _MockArenaEnv:
     def __init__(self, task: Task):
         self.task = task
         self._step = 0
-        self._max_steps = task.eval_config.max_steps
+        self._max_steps = (task.eval.max_steps or 1000)
         # Gym-like action_space for policy shape inference.
         import gymnasium as gym
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=float)

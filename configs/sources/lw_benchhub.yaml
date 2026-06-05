@@ -1,0 +1,3 @@
+name: lw_benchhub
+repo_env: LW_BENCHHUB_REPO
+default_path: /data/repos/LW-BenchHub

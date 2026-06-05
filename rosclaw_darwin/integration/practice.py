@@ -1,82 +1,62 @@
-"""Bridge between Darwin evaluation and rosclaw-practice.
-
-When an agent runs a task in Darwin, this bridge:
-  1. Generates a PraxisEvent from the evaluation trajectory.
-  2. Submits it to rosclaw-practice for MCAP recording and SeekDB persistence.
-
-This enables the "practice → memory → evolution" loop.
-"""
+"""PracticeBridge: submit evaluation events."""
 
 from __future__ import annotations
 
-import os
+import json
 import time
-from typing import Any
+from pathlib import Path
+
+from rosclaw_darwin.evaluation.result import EvaluationResult
+from rosclaw_darwin.tdl.schema import Task
 
 
 class PracticeBridge:
-    """Submit Darwin evaluation sessions as PraxisEvents to rosclaw-practice."""
+    """Submit Darwin evaluation sessions as practice events."""
 
-    def __init__(self, mcap_dir: str | None = None, fallback_dir: str | None = None):
-        self.mcap_dir = mcap_dir or os.getenv("ROSCLAW_PRACTICE_MCAP_DIR", "/data/rosclaw/mcap")
-        self.fallback_dir = fallback_dir or os.getenv("ROSCLAW_PRACTICE_FALLBACK_DIR", "/data/rosclaw/fallback")
-        self._committer: Any | None = None
-        self._recorder: Any | None = None
-
-    def _lazy_init(self) -> bool:
-        """Try to import rosclaw_practice; return True if available."""
-        if self._committer is not None:
-            return True
+    def __init__(self, mode: str = "file", endpoint: str | None = None):
+        self.mode = mode
+        self.endpoint = endpoint
+        self._events_dir = Path("data/practice_events")
         try:
-            from rosclaw_practice.committer import ExperienceCommitter  # type: ignore[import-untyped]
-            from rosclaw_practice.recorder import PhysicalRecorder  # type: ignore[import-untyped]
+            self._events_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            import tempfile
+            self._events_dir = Path(tempfile.gettempdir()) / "rosclaw_darwin" / "practice_events"
+            self._events_dir.mkdir(parents=True, exist_ok=True)
 
-            self._committer = ExperienceCommitter(fallback_dir=self.fallback_dir)
-            self._recorder = PhysicalRecorder(topics=["/darwin/eval"], base_dir=self.mcap_dir)
-            return True
-        except ImportError:
-            return False
-
-    def submit(
-        self,
-        session_id: str,
-        task_id: str,
-        metrics: dict[str, Any],
-        robot_id: str = "darwin_agent",
-        semantic_intent: str = "",
-        llm_cot: str = "",
-    ) -> dict[str, Any]:
-        """Build and submit a PraxisEvent.
-
-        Returns the event dict (whether submission succeeded or fell back).
-        """
+    def submit_event(self, result: EvaluationResult, task: Task) -> dict:
         event = {
-            "practice_id": session_id,
+            "practice_id": result.run_id,
+            "task_id": task.id,
+            "robot_id": task.embodiment.robot,
+            "status": "SUCCESS" if result.metrics.get("success_rate", 0.0) > 0.5 else "FAILED",
+            "reward": result.metrics.get("success_rate", 0.0),
+            "failure_type": self._dominant_failure(result),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "robot_id": robot_id,
-            "cognitive_context": {
-                "semantic_intent": semantic_intent or f"Evaluate task {task_id}",
-                "llm_cot": llm_cot or "Darwin evaluation loop",
-            },
-            "physical_feedback": {
-                "status": "SUCCESS" if metrics.get("success") else "FAILED_EVAL",
-                "reward": 1.0 if metrics.get("success") else 0.0,
-                "error_log": metrics.get("info", {}).get("error", ""),
-            },
-            "data_pointers": {
-                "mcap_path": f"{self.mcap_dir}/{session_id}.mcap",
-            },
+            "metrics": result.metrics,
         }
 
-        if self._lazy_init():
+        if self.mode == "file":
+            path = self._events_dir / "events.jsonl"
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        elif self.mode == "http" and self.endpoint:
+            import urllib.request
+            req = urllib.request.Request(
+                self.endpoint,
+                data=json.dumps(event).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             try:
-                self._committer.save_to_seekdb(event)
-                event["_submitted"] = True
-            except Exception as exc:
-                event["_submitted"] = False
-                event["_error"] = str(exc)
-        else:
-            event["_submitted"] = False
-            event["_reason"] = "rosclaw_practice not installed"
+                urllib.request.urlopen(req, timeout=5)
+            except Exception:
+                pass
 
         return event
+
+    @staticmethod
+    def _dominant_failure(result: EvaluationResult) -> str:
+        if not result.failure_types:
+            return ""
+        return max(result.failure_types, key=result.failure_types.get)  # type: ignore[arg-type]

@@ -6,8 +6,8 @@ import time
 import uuid
 from typing import Any, Callable
 
-from rosclaw_darwin.tdl.schema import Task
 from rosclaw_darwin.environment.base import BaseEnvironmentAdapter
+
 from .metrics import EvaluationMetrics, compute_metrics
 
 

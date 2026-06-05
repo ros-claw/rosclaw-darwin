@@ -1,0 +1,48 @@
+id: darwin_kitchen_open_fridge_v001
+name: Open fridge
+description: Open the refrigerator door.
+source: native
+domain: kitchen
+horizon: atomic
+
+scene:
+  name: kitchen
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: fridge
+    category: appliance
+    affordances: [openable, closeable, container, articulated]
+
+primitives:
+  - name: open
+    args:
+      target: fridge
+    postconditions:
+      - is_open(fridge)
+
+eval:
+  success_conditions:
+    - is_open(fridge)
+  failure_conditions:
+    - handle_grasp_failed
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 500
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - object_position
+    - constraint
+  difficulty: 1
+
+tags:
+  - kitchen
+  - openable

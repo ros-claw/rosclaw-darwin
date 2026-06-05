@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{% block title %}ROSClaw-Darwin{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 2rem; background: #f8f9fa; color: #212529; }
+    h1, h2 { color: #1a1a2e; }
+    nav { background: #16213e; padding: 1rem; border-radius: 8px; margin-bottom: 2rem; }
+    nav a { color: #fff; text-decoration: none; margin-right: 1.5rem; font-weight: 500; }
+    nav a:hover { text-decoration: underline; }
+    .card { background: #fff; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #dee2e6; }
+    th { background: #16213e; color: #fff; }
+    tr:hover { background: #f1f3f5; }
+    .metric { font-family: monospace; font-weight: bold; color: #0b7285; }
+    .badge { display: inline-block; padding: 0.25em 0.6em; border-radius: 999px; font-size: 0.85em; font-weight: 600; }
+    .badge-success { background: #d3f9d8; color: #2b8a3e; }
+    .badge-fail { background: #ffe3e3; color: #c92a2a; }
+    .rank-1 { background: #fff9db !important; }
+    .rank-2 { background: #f8f9fa !important; }
+    .rank-3 { background: #fff4e6 !important; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/">🏠 Overview</a>
+    <a href="/runs">📊 Runs</a>
+    <a href="/evolution">🧬 Evolution</a>
+    <a href="/tasks">📋 Tasks</a>
+    <a href="/task-graph">🕸️ Task Graph</a>
+    <a href="/skills">🎯 Skills</a>
+    <a href="/failures">⚠️ Failures</a>
+    <a href="/leaderboard">🏆 Leaderboard</a>
+  </nav>
+  {% block content %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,43 @@
+id: darwin_mvp_09_navigate_to_table
+name: Navigate To Table
+description: Navigate To Table task.
+source: native
+domain: loco_manipulation
+horizon: short
+
+scene:
+  name: default
+  domain: loco_manipulation
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: table
+    affordances: [navigable]
+
+primitives:
+  - name: navigate_to
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - loco_manipulation

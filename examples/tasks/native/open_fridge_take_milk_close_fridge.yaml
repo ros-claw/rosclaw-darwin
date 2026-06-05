@@ -1,0 +1,50 @@
+id: darwin_mvp_14_open_fridge_take_milk_close_fridge
+name: Open Fridge Take Milk Close Fridge
+description: Open Fridge Take Milk Close Fridge task.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: default
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: fridge
+    affordances: [openable]
+  - name: milk
+    affordances: [graspable]
+  - name: table
+    affordances: [surface]
+
+primitives:
+  - name: open
+  - name: grasp
+  - name: place
+  - name: close
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - kitchen

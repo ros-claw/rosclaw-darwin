@@ -1,0 +1,22 @@
+name: darwin_mvp
+tasks:
+- examples/tasks/native/clean_table.yaml
+- examples/tasks/native/replan_after_target_moved.yaml
+- examples/tasks/native/avoid_collision_after_blocked_path.yaml
+- examples/tasks/native/open_drawer.yaml
+- examples/tasks/native/open_fridge_take_milk.yaml
+- examples/tasks/native/navigate_to_table.yaml
+- examples/tasks/native/retry_failed_grasp.yaml
+- examples/tasks/native/carry_object_to_target.yaml
+- examples/tasks/native/navigate_and_pick.yaml
+- examples/tasks/native/close_drawer.yaml
+- examples/tasks/native/prepare_simple_breakfast.yaml
+- examples/tasks/native/open_microwave.yaml
+- examples/tasks/native/close_microwave.yaml
+- examples/tasks/native/pick_object.yaml
+- examples/tasks/native/avoid_obstacle_and_place.yaml
+- examples/tasks/native/place_object.yaml
+- examples/tasks/native/press_button.yaml
+- examples/tasks/native/open_fridge_take_milk_close_fridge.yaml
+- examples/tasks/native/lift_object.yaml
+- examples/tasks/native/recover_from_dropped_object.yaml

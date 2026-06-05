@@ -1,0 +1,46 @@
+id: darwin_mvp_10_navigate_and_pick
+name: Navigate And Pick
+description: Navigate And Pick task.
+source: native
+domain: loco_manipulation
+horizon: short
+
+scene:
+  name: default
+  domain: loco_manipulation
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: cube
+    affordances: [graspable]
+  - name: table
+    affordances: [surface]
+
+primitives:
+  - name: navigate_to
+  - name: grasp
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - loco_manipulation

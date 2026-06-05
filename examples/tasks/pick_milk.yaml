@@ -1,0 +1,51 @@
+id: darwin_kitchen_pick_milk_v001
+name: Pick milk
+description: Grasp the milk bottle from the table.
+source: native
+domain: kitchen
+horizon: atomic
+
+scene:
+  name: kitchen
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: milk
+    category: grocery
+    affordances: [graspable, movable]
+  - name: table
+    category: furniture
+    affordances: [surface]
+
+primitives:
+  - name: grasp
+    args:
+      target: milk
+    postconditions:
+      - holding(milk)
+
+eval:
+  success_conditions:
+    - holding(milk)
+  failure_conditions:
+    - milk_dropped
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 500
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - object_position
+    - object_instance
+  difficulty: 1
+
+tags:
+  - kitchen
+  - manipulation

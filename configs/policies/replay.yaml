@@ -1,0 +1,5 @@
+policy_id: replay
+type: replay
+strength: 0.6
+memory_bonus: 0.0
+actions: []

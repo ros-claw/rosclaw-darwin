@@ -1,36 +1,35 @@
-"""EvolutionRunner: the core loop that measures how fast an agent evolves.
-
-    Task
-      |
-      v
-  Loop 1 (first attempt)
-      |
-      v
-  Memory Consolidation  <-- force practice → SeekDB
-      |
-      v
-  Loop 2 (retry)
-      |
-      v
-  Evolution Score = delta(Loop1, Loop2)
-
-The runner integrates with rosclaw-practice (capture) and
-rosclaw-memory (consolidation) so the evaluation IS the learning.
-"""
+"""EvolutionRunner: the core loop that measures how fast an agent evolves."""
 
 from __future__ import annotations
 
-import asyncio
+import copy
 import time
 import uuid
-from typing import Any, Callable
+from typing import Any
 
-from rosclaw_darwin.tdl.schema import Task
-from rosclaw_darwin.environment.base import BaseEnvironmentAdapter
-from rosclaw_darwin.evaluation.base import DarwinEvaluator
-from rosclaw_darwin.evaluation.metrics import EvaluationMetrics
-from rosclaw_darwin.integration.practice import PracticeBridge
+from pydantic import BaseModel
+
+from rosclaw_darwin.adapters.base import BaseEnvironmentAdapter
+from rosclaw_darwin.evaluation.metrics import compute_evolution_metrics
+from rosclaw_darwin.evaluation.result import EvaluationResult
+from rosclaw_darwin.evolution.skill_registry import SkillCandidate, SkillRegistry
+from rosclaw_darwin.integration.how import HowBridge
 from rosclaw_darwin.integration.memory import MemoryBridge
+from rosclaw_darwin.integration.practice import PracticeBridge
+from rosclaw_darwin.tdl.schema import Task
+
+
+class EvolutionReport(BaseModel):
+    run_id: str
+    task_id: str
+    policy_id: str
+    loop_results: list[EvaluationResult]
+    evolution_metrics: dict[str, float]
+    discovered_skills: list[SkillCandidate] = []
+    generated_tasks: list[str] = []
+    artifacts: dict = {}
+
+
 
 
 class EvolutionRunner:
@@ -38,140 +37,95 @@ class EvolutionRunner:
 
     def __init__(
         self,
-        adapter_factory: Callable[[Task], BaseEnvironmentAdapter],
-        practice: PracticeBridge | None = None,
-        memory: MemoryBridge | None = None,
-        consolidation_delay: float = 2.0,
+        adapter: BaseEnvironmentAdapter,
+        practice_bridge=None,
+        memory_bridge=None,
+        how_bridge=None,
+        config=None,
     ):
-        self.adapter_factory = adapter_factory
-        self.practice = practice or PracticeBridge()
-        self.memory = memory or MemoryBridge()
-        self.consolidation_delay = consolidation_delay
-        self.results: list[dict[str, Any]] = []
+        self.adapter = adapter
+        self.practice = practice_bridge or PracticeBridge()
+        self.memory = memory_bridge or MemoryBridge()
+        self.how = how_bridge or HowBridge()
+        self.config = config or {}
+        self.skill_registry = SkillRegistry(self.config.get("skill_discovery"))
 
-    async def evaluate_evolution(
+    def evolve(
         self,
         task: Task,
-        policy: Callable[[dict[str, Any]], dict[str, Any]],
-        max_steps: int | None = None,
+        policy_config: dict,
+        loops: int = 2,
     ) -> dict[str, Any]:
-        """Run the full two-loop evolution evaluation.
+        """Run the full evolution loop.
 
-        Returns a dict with:
-            loop1: EvaluationMetrics
-            loop2: EvaluationMetrics
-            evolution_score: float   # 0.0 - 1.0
-            sdr: float               # Skill Discovery Rate
-            mie: float               # Memory Integration Efficiency
-            session_id: str
+        Returns EvolutionReport as dict.
         """
-        session_id = f"evo_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        run_id = f"evo_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        loop_results: list[EvaluationResult] = []
 
-        # --- Loop 1: first encounter (baseline) ---
-        adapter1 = self.adapter_factory(task)
-        evaluator1 = DarwinEvaluator(
-            adapter1,
-            practice_hook=self._make_practice_hook(session_id, "loop1"),
-            memory_hook=self._make_memory_hook(task.id),
-        )
-        result1 = await evaluator1.evaluate(policy, max_steps=max_steps)
+        # --- Loop 1: First Encounter ---
+        result1 = self.adapter.run_policy(policy_config)
+        loop_results.append(result1)
 
-        # Force memory consolidation: wait for practice to flush to SeekDB.
-        await asyncio.sleep(self.consolidation_delay)
+        # Practice event
+        self.practice.submit_event(result1, task)
 
-        # Record the first attempt in SeekDB.
-        self.memory.record_experience(
-            task_id=task.id,
-            session_id=f"{session_id}_loop1",
-            outcome="success" if result1.success else "failure",
-            metrics=result1.to_dict(),
-        )
+        # Memory record
+        self.memory.record_experience(task, result1)
 
-        # --- Loop 2: retry after consolidation ---
-        adapter2 = self.adapter_factory(task)
-        evaluator2 = DarwinEvaluator(
-            adapter2,
-            practice_hook=self._make_practice_hook(session_id, "loop2"),
-            memory_hook=self._make_memory_hook(task.id),
-        )
-        result2 = await evaluator2.evaluate(policy, max_steps=max_steps)
+        # How: skill extraction
+        experiences = self.memory.query_experiences(task)
+        candidates = self.how.extract_skills(experiences)
+        for c in candidates:
+            c.source_task_ids.append(task.id)
+            self.skill_registry.add(c)
 
-        self.memory.record_experience(
-            task_id=task.id,
-            session_id=f"{session_id}_loop2",
-            outcome="success" if result2.success else "failure",
-            metrics=result2.to_dict(),
-        )
+        # Mutate / generate follow-up tasks
+        generated_tasks: list[str] = []
+        if not result1.metrics.get("success_rate", 0.0) >= 0.8:
+            from rosclaw_darwin.evolution.mutators import MUTATOR_REGISTRY
+            mutator_names = task.mutation.allowed or ["spatial", "object", "constraint"]
+            for mname in mutator_names[:2]:
+                mutator_cls = MUTATOR_REGISTRY.get(mname)
+                if mutator_cls:
+                    mutated = mutator_cls().mutate(task, seed=task.mutation.seed)
+                    generated_tasks.append(mutated.id)
 
-        # --- Compute evolution scores ---
-        evolution_score = self._calculate_evolution_score(result1, result2)
-        sdr = self._calculate_sdr(result1, result2)
-        mie = self._calculate_mie(result1, result2)
+        # Consolidation: add memory bonus for loop 2
+        consolidated = self.memory.consolidate(task)
+        memory_bonus = consolidated.get("memory_bonus", 0.0)
+
+        # --- Loop 2: Retry after learning ---
+        policy2 = copy.deepcopy(policy_config)
+        policy2["memory_bonus"] = memory_bonus
+        result2 = self.adapter.run_policy(policy2)
+        loop_results.append(result2)
+
+        self.practice.submit_event(result2, task)
+        self.memory.record_experience(task, result2)
+
+        # Evolution metrics
+        l1 = {
+            **result1.metrics,
+            "num_failures": (task.eval.max_episodes or 20) - int(result1.metrics.get("num_success", 0)),
+        }
+        l2 = {
+            **result2.metrics,
+            "num_failures": (task.eval.max_episodes or 20) - int(result2.metrics.get("num_success", 0)),
+        }
+        evo_metrics = compute_evolution_metrics(l1, l2)
+
+        # Skill discovery rate from registry
+        evo_metrics["skill_discovery_rate"] = len(self.skill_registry.list_skills()) / max(1, len(loop_results))
 
         report = {
-            "session_id": session_id,
+            "run_id": run_id,
             "task_id": task.id,
-            "loop1": result1.to_dict(),
-            "loop2": result2.to_dict(),
-            "evolution_score": evolution_score,
-            "sdr": sdr,
-            "mie": mie,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "policy_id": policy_config.get("policy_id", "unknown"),
+            "loop_results": [r.model_dump(mode="json") for r in loop_results],
+            "evolution_metrics": evo_metrics,
+            "discovered_skills": [s.model_dump(mode="json") for s in self.skill_registry.list_skills()],
+            "generated_tasks": generated_tasks,
+            "artifacts": {},
         }
-        self.results.append(report)
         return report
-
-    # ------------------------------------------------------------------
-    # Scoring
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _calculate_evolution_score(r1: EvaluationMetrics, r2: EvaluationMetrics) -> float:
-        """Score 0-1 based on improvement from loop1 to loop2."""
-        score = 0.0
-        if (not r1.success) and r2.success:
-            score += 0.5  # Core: went from fail to success.
-        if r2.step_count < r1.step_count and r1.step_count > 0:
-            score += 0.25 * (1.0 - r2.step_count / r1.step_count)
-        if r2.collision_count < r1.collision_count:
-            score += 0.25
-        return min(score, 1.0)
-
-    @staticmethod
-    def _calculate_sdr(r1: EvaluationMetrics, r2: EvaluationMetrics) -> float:
-        """Skill Discovery Rate: did the agent discover a new skill?"""
-        # Simplistic: if loop2 succeeds with fewer steps, we infer skill discovery.
-        if r2.success and r1.step_count > 0:
-            improvement = 1.0 - (r2.step_count / max(r1.step_count, 1))
-            return max(improvement, 0.0)
-        return 0.0
-
-    @staticmethod
-    def _calculate_mie(r1: EvaluationMetrics, r2: EvaluationMetrics) -> float:
-        """Memory Integration Efficiency: did memory reduce repeated errors?"""
-        # If loop2 has fewer collisions than loop1, memory was integrated.
-        if r1.collision_count > 0:
-            return max(1.0 - (r2.collision_count / r1.collision_count), 0.0)
-        return 1.0 if r2.collision_count == 0 else 0.0
-
-    # ------------------------------------------------------------------
-    # Hook factories
-    # ------------------------------------------------------------------
-
-    def _make_practice_hook(self, session_id: str, loop_label: str) -> Callable:
-        def hook(**kwargs: Any) -> None:
-            self.practice.submit(
-                session_id=f"{session_id}_{loop_label}",
-                task_id=kwargs.get("task_id", "unknown"),
-                metrics=kwargs.get("metrics", {}),
-                semantic_intent=f"Darwin evolution {loop_label}",
-            )
-        return hook
-
-    def _make_memory_hook(self, task_id: str) -> Callable:
-        def hook(**kwargs: Any) -> list[dict[str, Any]]:
-            return self.memory.query(
-                query_text=kwargs.get("query", task_id),
-                n_results=5,
-            )
-        return hook

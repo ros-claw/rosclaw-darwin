@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Failures - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>⚠️ Failure Taxonomy</h1></div>
+{% if failures %}
+<div class="card">
+  <table>
+    <tr><th>Failure Type</th><th>Count</th></tr>
+    {% for ft, count in failures|dictsort(by='value', reverse=true) %}
+    <tr>
+      <td>{{ ft }}</td>
+      <td class="metric">{{ count }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card"><p>No failure data yet.</p></div>
+{% endif %}
+{% endblock %}

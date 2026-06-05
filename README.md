@@ -1,191 +1,152 @@
-# ROSClaw-Darwin 🧬
+# ROSClaw-Darwin
 
-> **Evolutionary Embodied Intelligence Benchmark (EEIB)**
->
-> The world's first benchmark infrastructure that measures not how strong an agent is,
-> but how fast it evolves.
+**Evolutionary Benchmark Layer for Embodied Agents**
 
-## Philosophy
+ROSClaw-Darwin does not replace IsaacLab-Arena.
+It extends Arena with task evolution, memory-aware evaluation, and evolution metrics.
 
-Traditional benchmarks (BEHAVIOR-1K, LIBERO, Habitat) ask:
+- **IsaacLab-Arena** answers: *Can this policy solve this task?*
+- **ROSClaw-Darwin** answers: *Can this agent learn from failure and solve increasingly complex task families?*
+
+## What is ROSClaw-Darwin?
+
+ROSClaw-Darwin 是一个面向 Physical AI / Embodied Agent 的进化型评测框架。
+
+传统 Benchmark 评估：机器人现在有多强  
+ROSClaw-Darwin 评估：机器人能否从失败中学习，并在越来越复杂的任务中持续变强
+
+## Relationship with External Projects
+
+| Project | Role in Darwin |
+|---------|----------------|
+| IsaacLab-Arena | 主执行底座（Scene / Embodiment / Task / Runner） |
+| LW-BenchHub | 第一批可运行任务种子（kitchen, loco-manipulation, multi-robot） |
+| RoboTwin IsaacLab-Arena Branch | 双臂操作与强 domain randomization 任务来源 |
+| BEHAVIOR-1K | long-horizon task ontology / task genome 来源（语义导入） |
+
+## Quickstart with MockAdapter
+
+```bash
+# Install
+pip install -e ".[dev]"
+
+# Check environment
+darwin doctor
+
+# Validate a task
+darwin validate-task examples/tasks/open_fridge_take_milk.yaml
+
+# Run mock evaluation
+darwin run --adapter mock --task examples/tasks/open_fridge_take_milk.yaml --policy configs/policies/zero_action.yaml --episodes 20
+
+# Run evolution evaluation
+darwin evolve --adapter mock --task examples/tasks/open_fridge_take_milk.yaml --policy configs/policies/zero_action.yaml --loops 2
+
+# Generate task variations
+darwin mutate --task examples/tasks/open_fridge_take_milk.yaml --n 20 --out data/tasks/mutated
+
+# Compose long-horizon tasks
+darwin compose examples/tasks/open_fridge.yaml examples/tasks/pick_milk.yaml examples/tasks/close_fridge.yaml --out data/tasks/composed/open_pick_close.yaml
+
+# Start dashboard
+darwin dashboard --data data --port 8080
+```
+
+## Import Tasks
+
+```bash
+# LW-BenchHub
+darwin import lw --repo /data/repos/LW-BenchHub --out data/tasks/lw --limit 30
+
+# RoboTwin
+darwin import robotwin --repo /data/repos/RoboTwin --out data/tasks/robotwin --limit 20
+
+# BEHAVIOR-1K (semantic only)
+darwin import behavior1k --repo /data/repos/BEHAVIOR-1K --semantic-only --out data/tasks/behavior1k --limit 100
+```
+
+## Metrics Explanation
+
+### Traditional Metrics
+- `success_rate`: 成功率
+- `completion_time_mean`: 平均完成时间
+- `collision_count_mean`: 平均碰撞次数
+
+### Evolution Metrics
+- `delta_success_rate`: 两次 loop 间的成功率变化
+- `memory_integration_efficiency`: 记忆整合效率（重复错误减少程度）
+- `skill_discovery_rate`: 新技能发现率
+- `robustness_gain`: 鲁棒性提升
+- `evolution_score`: 综合进化得分
 
 ```
-"Can the robot complete this task?"
+evolution_score =
+  0.4 * delta_success_rate
+  + 0.2 * memory_integration_efficiency
+  + 0.2 * skill_discovery_rate
+  + 0.1 * completion_time_improvement
+  + 0.1 * robustness_gain
 ```
 
-Darwin asks:
+## Dashboard
 
-```
-"After the robot fails, how quickly does it learn to succeed?"
-```
+Darwin Dashboard 提供以下页面：
 
-This is the shift from **static evaluation** to **evolutionary evaluation**.
+- `/` — Overview
+- `/runs` — Evaluation runs
+- `/evolution` — Evolution reports
+- `/tasks` — Task registry
+- `/task-graph` — Task lineage graph
+- `/skills` — Skill discovery registry
+- `/failures` — Failure taxonomy and frequency
+- `/leaderboard` — Evolution leaderboard（按 evolution_score 排序）
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     ROSClaw-Darwin                          │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 1: Core Framework                                     │
-│  ┌────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
-│  │ TDL Schema │  │ Task Loader  │  │ Environment Adapter │  │
-│  │   (YAML)   │──│ (Multi-src)  │──│  (Arena / MuJoCo)   │  │
-│  └────────────┘  └──────────────┘  └─────────────────────┘  │
-│         │                                       │            │
-│         └───────────────────────────────────────┘            │
-│                         │                                    │
-│  ┌──────────────────────▼──────────────────────┐             │
-│  │           Base Evaluator                    │             │
-│  │  (success_rate, time, path, collisions)     │             │
-│  └──────────────────────┬──────────────────────┘             │
-│                         │                                    │
-│  Phase 2: Evolution Engine                                   │
-│  ┌──────────────────────▼──────────────────────┐             │
-│  │         Task Genome Engine                  │             │
-│  │  (mutate, compose, generate_random)         │             │
-│  └──────────────────────┬──────────────────────┘             │
-│                         │                                    │
-│  ┌──────────────────────▼──────────────────────┐             │
-│  │         EvolutionRunner                     │             │
-│  │  Loop 1 → Memory Consolidation → Loop 2     │             │
-│  └──────────────────────┬──────────────────────┘             │
-│                         │                                    │
-│  ┌──────────────────────▼──────────────────────┐             │
-│  │      MemoryEvolutionTracker                 │             │
-│  │  (verify causal edges, skill extraction)    │             │
-│  └──────────────────────┬──────────────────────┘             │
-│                         │                                    │
-│  Phase 3: Dashboard                                          │
-│  ┌──────────────────────▼──────────────────────┐             │
-│  │         EEIB Dashboard                      │             │
-│  │  (SDR / MIE / SSI leaderboard)              │             │
-│  └─────────────────────────────────────────────┘             │
-└─────────────────────────────────────────────────────────────┘
-         │                              │
-         ▼                              ▼
-┌─────────────────┐          ┌─────────────────────┐
-│ rosclaw-practice│          │   rosclaw-memory    │
-│  (PraxisEvent)  │          │     (SeekDB)        │
-└─────────────────┘          └─────────────────────┘
+Task Sources
+  -> ROSClaw-TDL
+  -> Task Graph
+  -> Task Genome Engine
+  -> Arena / Mock / RoboTwin Adapter
+  -> Evolution Runner
+  -> Practice / Memory / How Bridge
+  -> Evolution Metrics
+  -> Dashboard / Leaderboard
 ```
 
-## Quick Start
-
-### Option A: One-Click Docker Deploy (Recommended)
-
-```bash
-# 1. Clone
-git clone https://github.com/ros-claw/rosclaw-darwin.git
-cd rosclaw-darwin
-
-# 2. Deploy (downloads IsaacLab-Arena, builds images, runs smoke test)
-./scripts/deploy.sh
-
-# 3. Run demo
-make demo
-
-# 4. Start dashboard
-make dashboard
-# Open http://localhost:8080
-```
-
-### Option B: Local Development (Mock Mode)
-
-```bash
-# 1. Install
-cd rosclaw-darwin
-pip install -e ".[dev]"
-
-# 2. Run demo (mock mode, no Isaac Sim required)
-python examples/demo.py
-
-# 3. Run tests
-python -m pytest tests/ -v
-
-# 4. Start dashboard
-python -m rosclaw_darwin.dashboard.app
-# Open http://localhost:8080
-```
-
-### Docker Make Targets
-
-```bash
-make help        # Show all available targets
-make build       # Build Docker images (base + full)
-make build-base  # Build IsaacLab-Arena base image only
-make build-full  # Build rosclaw-darwin layer
-make run         # Start interactive container shell
-make run-detached # Start container in background
-make demo        # Run end-to-end demo inside container
-make test        # Run pytest suite inside container
-make eval        # Evaluate default task
-make dashboard   # Start EEIB leaderboard on port 8080
-make deploy      # Full one-click deployment
-make status      # Show container and image status
-make clean       # Remove containers and images
-```
-
-See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment guide and [docs/DOCKER.md](docs/DOCKER.md) for Docker usage patterns.
-
-## Task Definition Language (TDL)
-
-```yaml
-id: pick_place_milk_001
-name: Pick and Place Milk
-scene: kitchen_modern_01
-primitives:
-  - name: Navigate
-    target: counter
-  - name: Pick
-    params: {force: 3.0}
-    target: milk_carton
-  - name: Place
-    target: fridge
-objects:
-  - name: milk_carton
-    object_type: graspable
-    properties: {weight: 0.5}
-constraints:
-  - name: upright_placement
-    constraint_type: physical
-    weight: 2.0
-eval_config:
-  max_steps: 500
-  metrics: [success_rate, completion_time, path_efficiency]
-```
-
-## Evolution Metrics
-
-| Metric | Full Name | Meaning |
-|--------|-----------|---------|
-| **SDR** | Skill Discovery Rate | New skills discovered per episode |
-| **MIE** | Memory Integration Efficiency | Errors avoided on retry thanks to memory |
-| **SSI** | Swarm Synergy Index | Multi-agent coordination quality |
-| **Evolution Score** | Composite | 0-1 score of loop1→loop2 improvement |
-
-## Integration with rosclaw Ecosystem
-
-- **rosclaw-practice**: `@practice_capture` decorator auto-records evaluation sessions as `PraxisEvent`
-- **rosclaw-memory**: SeekDB stores causal edges (`[Grasp] -FAILS_ON-> [Transparent Cup]`)
-- **rosclaw-know/how**: Extract failure patterns and generate skill templates
-
-## Project Structure
+## Directory Structure
 
 ```
 rosclaw-darwin/
 ├── rosclaw_darwin/
-│   ├── tdl/              # Task Definition Language
-│   ├── environment/      # Simulator adapters (Arena, MuJoCo)
-│   ├── evaluation/       # Metrics and evaluators
-│   ├── evolution/        # Genome, Runner, Tracker
-│   ├── integration/      # Practice + Memory bridges
-│   └── dashboard/        # EEIB web leaderboard
-├── configs/tasks/        # Example task YAMLs
-├── tests/                # Pytest suite
-└── examples/             # Demo scripts
+│   ├── cli/           # Typer CLI
+│   ├── tdl/           # Task Definition Language
+│   ├── sources/       # Importers (LW, RoboTwin, BEHAVIOR-1K)
+│   ├── adapters/      # Environment adapters (mock, arena)
+│   ├── evaluation/    # Metrics and results
+│   ├── evolution/     # Genome, mutators, composer, runner
+│   ├── integration/   # Practice / Memory / How / Know bridges
+│   ├── dashboard/     # FastAPI dashboard
+│   └── utils/         # Helpers
+├── examples/tasks/    # Example TDL tasks
+├── configs/           # Configurations
+├── tests/             # Pytest suite
+└── docs/              # Documentation
 ```
+
+## Roadmap
+
+- [x] Phase 0: 仓库骨架
+- [x] Phase 1: TDL + MockAdapter + Metrics
+- [x] Phase 2: Task Genome Engine
+- [x] Phase 3: Evolution Runner + Memory/Skill MVP
+- [ ] Phase 4: IsaacLab-Arena Adapter (subprocess runner)
+- [ ] Phase 5: LW-BenchHub Importer (full scanning)
+- [ ] Phase 6: RoboTwin Importer (full scanning)
+- [ ] Phase 7: BEHAVIOR-1K Semantic Importer (BDDL parsing)
+- [x] Phase 8: Dashboard MVP
 
 ## License
 
-Apache 2.0
+MIT

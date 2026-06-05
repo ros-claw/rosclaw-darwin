@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Runs - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>📊 Evaluation Runs</h1></div>
+{% if runs %}
+<div class="card"><table><tr><th>Run ID</th><th>Task</th><th>Adapter</th><th>Status</th><th>Success Rate</th></tr>
+{% for run in runs %}<tr><td><code>{{ run.run_id }}</code></td><td>{{ run.task_id }}</td><td>{{ run.adapter }}</td>
+<td><span class="badge {% if run.status == 'completed' %}badge-success{% else %}badge-fail{% endif %}">{{ run.status }}</span></td>
+<td class="metric">{{ "%.2f"|format(run.metrics.get('success_rate', 0) * 100) }}%</td></tr>
+{% endfor %}</table></div>
+{% else %}
+<div class="card"><p>No runs yet.</p></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,55 @@
+# ROSClaw-Darwin Master Configuration
+
+darwin:
+  version: "0.1.0"
+
+# Default adapter settings
+adapter:
+  default: mock
+  mock:
+    enabled: true
+  arena:
+    enabled: false
+    repo: "${ARENA_REPO}"
+    python_bin: python
+  robotwin:
+    enabled: false
+    repo: "${ROBOTWIN_REPO}"
+
+# Skill discovery thresholds
+skill_discovery:
+  min_task_count: 2
+  min_success_gain: 0.10
+  min_progress_gain: 0.15
+
+# Evolution runner defaults
+evolution:
+  default_loops: 2
+  consolidation_delay: 2.0
+  mutators:
+    - spatial
+    - object
+    - distractor
+    - instruction
+    - constraint
+
+# External repo paths (can be overridden by env vars)
+sources:
+  lw_benchhub: "${LW_BENCHHUB_REPO:/data/repos/LW-BenchHub}"
+  robotwin: "${ROBOTWIN_REPO:/data/repos/RoboTwin}"
+  behavior1k: "${BEHAVIOR1K_REPO:/data/repos/BEHAVIOR-1K}"
+
+# Dashboard settings
+dashboard:
+  host: 0.0.0.0
+  port: 8080
+  data_dir: data
+
+# Data storage paths
+paths:
+  runs: data/runs
+  evolution_runs: data/evolution_runs
+  practice_events: data/practice_events
+  memory: data/memory
+  skills: data/skills
+  tasks: data/tasks

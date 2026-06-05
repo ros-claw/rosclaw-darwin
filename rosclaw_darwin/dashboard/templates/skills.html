@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Skills - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🎯 Skill Discovery Registry</h1></div>
+{% if skills %}
+{% for skill in skills %}
+<div class="card">
+  <h3>{{ skill.name }} <span style="font-size:0.7em;color:#666;">({{ skill.fingerprint }})</span></h3>
+  <p><strong>Pattern:</strong> {{ skill.action_pattern|join(" → ") }}</p>
+  <p><strong>Affordances:</strong> {{ skill.affordances|join(", ") }}</p>
+  <p><strong>Source Tasks:</strong> {{ skill.source_task_ids|join(", ") }}</p>
+  <p><strong>Evidence:</strong> success_gain={{ skill.evidence.get('success_gain', 0) }}, progress_gain={{ skill.evidence.get('progress_gain', 0) }}</p>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p>No skills discovered yet.</p></div>
+{% endif %}
+{% endblock %}

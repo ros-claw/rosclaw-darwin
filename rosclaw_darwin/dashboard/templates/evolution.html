@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Evolution - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧬 Evolution Reports</h1></div>
+{% if evolution_runs %}
+{% for evo in evolution_runs %}
+<div class="card">
+  <h2>{{ evo.run_id }} <span style="font-size:0.7em;color:#666;">({{ evo.task_id }})</span></h2>
+  <p>Policy: {{ evo.policy_id }}</p>
+  <table>
+    <tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Evolution Score</td><td class="metric">{{ "%.4f"|format(evo.evolution_metrics.get('evolution_score', 0)) }}</td></tr>
+    <tr><td>Δ Success Rate</td><td class="metric">{{ "%.4f"|format(evo.evolution_metrics.get('delta_success_rate', 0)) }}</td></tr>
+    <tr><td>Memory Integration Efficiency</td><td class="metric">{{ "%.4f"|format(evo.evolution_metrics.get('memory_integration_efficiency', 0)) }}</td></tr>
+    <tr><td>Skill Discovery Rate</td><td class="metric">{{ "%.4f"|format(evo.evolution_metrics.get('skill_discovery_rate', 0)) }}</td></tr>
+  </table>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p>No evolution runs yet.</p></div>
+{% endif %}
+{% endblock %}

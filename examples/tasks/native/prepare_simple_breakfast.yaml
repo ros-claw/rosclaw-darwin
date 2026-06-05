@@ -1,0 +1,51 @@
+id: darwin_mvp_15_prepare_simple_breakfast
+name: Prepare Simple Breakfast
+description: Prepare Simple Breakfast task.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: default
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: fridge
+    affordances: [openable]
+  - name: milk
+    affordances: [graspable]
+  - name: bowl
+    affordances: [container]
+  - name: table
+    affordances: [surface]
+
+primitives:
+  - name: open
+  - name: grasp
+  - name: place
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - kitchen

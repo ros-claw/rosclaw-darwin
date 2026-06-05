@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Task Graph - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🕸️ Task Lineage Graph</h1></div>
+<div class="card">
+  <h3>Nodes ({{ graph.nodes|length }})</h3>
+  <ul>
+    {% for node in graph.nodes %}
+    <li><strong>{{ node.id }}</strong> — {{ node.name }}</li>
+    {% endfor %}
+  </ul>
+</div>
+<div class="card">
+  <h3>Edges ({{ graph.edges|length }})</h3>
+  <ul>
+    {% for edge in graph.edges %}
+    <li>{{ edge.source }} → {{ edge.target }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

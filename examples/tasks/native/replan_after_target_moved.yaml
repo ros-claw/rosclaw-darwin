@@ -1,0 +1,45 @@
+id: darwin_mvp_20_replan_after_target_moved
+name: Replan After Target Moved
+description: Replan After Target Moved task.
+source: native
+domain: failure_recovery
+horizon: short
+
+scene:
+  name: default
+  domain: failure_recovery
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: cube
+    affordances: [graspable]
+
+primitives:
+  - name: navigate_to
+  - name: grasp
+  - name: retry
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - failure_recovery

@@ -1,113 +1,28 @@
-# ROSClaw-Darwin Docker Compose
-# Orchestrates Isaac Sim + IsaacLab-Arena + rosclaw-darwin services.
-#
-# Usage:
-#   docker compose up -d          # Start all services in background
-#   docker compose up             # Start with logs attached
-#   docker compose down           # Stop all services
-#   docker compose logs -f        # Follow logs
-#   docker compose exec darwin bash   # Enter container shell
-#
-# Environment variables:
-#   ROSCLAW_DATASETS   - Host datasets directory (default: ~/datasets)
-#   ROSCLAW_MODELS     - Host models directory (default: ~/models)
-#   ROSCLAW_EVAL       - Host eval results directory (default: ~/eval)
-
-version: "3.9"
-
 services:
-  # Main rosclaw-darwin service
-  darwin:
+  darwin-mock:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      args:
-        BASE_IMAGE: rosclaw-darwin:arena-base
-    image: rosclaw-darwin:latest
-    container_name: rosclaw_darwin
-    environment:
-      - ACCEPT_EULA=Y
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - ROSCLAW_PRACTICE_MCAP_DIR=/data/rosclaw/mcap
-      - ROSCLAW_PRACTICE_FALLBACK_DIR=/data/rosclaw/fallback
-      - SEEKDB_MODE=embedded
-      - SEEKDB_PATH=/data/seekdb/darwin
+      target: mock
     volumes:
-      # rosclaw-darwin source (live reload during development)
       - .:/workspace/rosclaw-darwin
-      # Omniverse assets (Isaac Sim Nucleus)
-      - /data/omniverse:/data/omniverse:ro
-      # Data directories
-      - ${ROSCLAW_DATASETS:-~/datasets}:/data/datasets
-      - ${ROSCLAW_MODELS:-~/models}:/data/models
-      - ${ROSCLAW_EVAL:-~/eval}:/data/eval
-      - darwin-data:/data/rosclaw
-      - darwin-seekdb:/data/seekdb
-      # rosclaw ecosystem (optional, mount if available)
-      - /code/rosclaw/rosclaw-practice:/workspace/rosclaw-practice:ro
-      - /code/rosclaw/rosclaw-memory:/workspace/rosclaw-memory:ro
-      - /code/rosclaw/rosclaw-know:/workspace/rosclaw-know:ro
-      - /code/rosclaw/rosclaw-how:/workspace/rosclaw-how:ro
-    ports:
-      # EEIB Dashboard
-      - "8080:8080"
-      # Debugpy (for VSCode remote debugging)
-      - "5678:5678"
-    # Keep container running
-    command: ["tail", "-f", "/dev/null"]
-    # Resource limits
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # Health check
-    healthcheck:
-      test: ["CMD", "/isaac-sim/python.sh", "-c", "import isaaclab_arena"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    # Restart policy
-    restart: unless-stopped
-
-  # EEIB Dashboard standalone service
-  dashboard:
-    extends:
-      service: darwin
-    container_name: rosclaw_darwin_dashboard
+      - ./data:/data/rosclaw-darwin
+    command: darwin dashboard --data /data/rosclaw-darwin --host 0.0.0.0 --port 8080
     ports:
       - "8080:8080"
-    command:
-      - /isaac-sim/python.sh
-      - -m
-      - rosclaw_darwin.dashboard.app
-    # Health check for dashboard
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/leaderboard"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    profiles:
-      - dashboard
 
-  # Evaluation runner service (one-shot)
-  eval:
-    extends:
-      service: darwin
-    container_name: rosclaw_darwin_eval
-    command:
-      - /isaac-sim/python.sh
-      - /workspace/rosclaw-darwin/examples/demo.py
-    profiles:
-      - eval
-
-volumes:
-  darwin-data:
-    driver: local
-  darwin-seekdb:
-    driver: local
+  darwin-arena:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: arena
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - .:/workspace/rosclaw-darwin
+      - /data/repos:/data/repos
+      - /data/models:/data/models
+      - /data/datasets:/data/datasets
+      - ./data:/data/rosclaw-darwin
+    command: tail -f /dev/null

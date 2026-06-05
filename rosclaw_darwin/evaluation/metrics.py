@@ -1,105 +1,84 @@
-"""Metrics computation for embodied AI evaluation.
-
-Traditional benchmarks measure Success Rate. Darwin measures
-Skill Discovery Rate (SDR), Memory Integration Efficiency (MIE),
-and Swarm Synergy Index (SSI).
-"""
+"""Metrics computation for embodied AI evaluation."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
 
-@dataclass
-class EvaluationMetrics:
-    """Standard + Evolutionary metrics for a single evaluation run."""
+def compute_basic_metrics(episodes: list[dict[str, Any]]) -> dict[str, float]:
+    """Compute basic metrics from a list of episode results."""
+    if not episodes:
+        return {}
+    successes = [e["success"] for e in episodes]
+    collisions = [e.get("collisions", 0) for e in episodes]
+    times = [e.get("time", 0.0) for e in episodes]
 
-    # --- Traditional metrics ---
-    success: bool = False
-    completion_time: float = 0.0
-    path_length: float = 0.0
-    collision_count: int = 0
-    step_count: int = 0
+    success_times = [t for s, t in zip(successes, times) if s]
+    success_collisions = [c for s, c in zip(successes, collisions) if s]
 
-    # --- Evolutionary metrics (Phase 2+) ---
-    skill_discovery_rate: float = 0.0  # SDR: new skills per episode
-    memory_integration_efficiency: float = 0.0  # MIE: errors avoided on retry
-    swarm_synergy_index: float = 0.0  # SSI: multi-agent coordination score
-    evolution_delta: float = 0.0  # score_delta between loop1 and loop2
-
-    # --- Raw data for downstream analysis ---
-    trajectory: list[dict[str, Any]] = field(default_factory=list)
-    info: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "success": self.success,
-            "completion_time": self.completion_time,
-            "path_length": self.path_length,
-            "collision_count": self.collision_count,
-            "step_count": self.step_count,
-            "skill_discovery_rate": self.skill_discovery_rate,
-            "memory_integration_efficiency": self.memory_integration_efficiency,
-            "swarm_synergy_index": self.swarm_synergy_index,
-            "evolution_delta": self.evolution_delta,
-            "info": self.info,
-        }
+    return {
+        "success_rate": float(np.mean(successes)),
+        "completion_time_mean": float(np.mean(success_times)) if success_times else 0.0,
+        "completion_time_std": float(np.std(success_times)) if success_times else 0.0,
+        "episode_time_mean": float(np.mean(times)),
+        "episode_time_std": float(np.std(times)),
+        "collision_count_mean": float(np.mean(success_collisions)) if success_collisions else float(np.mean(collisions)),
+        "collision_count_overall_mean": float(np.mean(collisions)),
+        "progress_mean": float(np.mean(successes)),  # proxy
+        "path_efficiency": 0.0,  # placeholder
+        "energy_cost": 0.0,  # placeholder
+        "num_episodes": len(episodes),
+        "num_success": int(sum(successes)),
+    }
 
 
-def compute_metrics(
-    trajectory: list[dict[str, Any]],
-    success: bool = False,
-    time_limit: float = 120.0,
-) -> EvaluationMetrics:
-    """Compute metrics from a recorded trajectory.
+def compute_evolution_metrics(
+    loop1: dict[str, float],
+    loop2: dict[str, float],
+) -> dict[str, float]:
+    """Compute evolution metrics comparing two evaluation loops."""
+    delta_success_rate = loop2.get("success_rate", 0.0) - loop1.get("success_rate", 0.0)
 
-    Args:
-        trajectory: List of step dicts, each with keys like
-                    'obs', 'action', 'reward', 'info'.
-        success:    Whether the task was completed successfully.
-        time_limit: Maximum allowed time in seconds.
-    """
-    step_count = len(trajectory)
-    total_reward = 0.0
-    collision_count = 0
-    positions: list[tuple[float, ...]] = []
+    same_failure_loop1 = loop1.get("num_failures", 0)
+    same_failure_loop2 = loop2.get("num_failures", 0)
 
-    for step in trajectory:
-        reward = step.get("reward", 0.0)
-        total_reward += reward
-        info = step.get("info", {})
-        if info.get("collision", False):
-            collision_count += 1
-        if "position" in info:
-            positions.append(tuple(info["position"]))
+    if same_failure_loop1 == 0:
+        mie_raw = None
+        mie_score = 0.0
+        mie_available = False
+    else:
+        mie_raw = 1.0 - same_failure_loop2 / same_failure_loop1
+        mie_score = max(0.0, min(1.0, mie_raw))
+        mie_available = True
 
-    path_length = 0.0
-    if len(positions) > 1:
-        arr = np.array(positions)
-        diffs = np.diff(arr, axis=0)
-        path_length = float(np.sum(np.linalg.norm(diffs, axis=1)))
+    skill_discovery_rate = loop2.get("skill_discovery_rate", 0.0)
+    robustness_loop1 = loop1.get("success_rate", 0.0)
+    robustness_loop2 = loop2.get("success_rate", 0.0)
+    robustness_gain = robustness_loop2 - robustness_loop1
 
-    completion_time = step_count * 0.05  # Assume 50ms per step default
+    completion_time_improvement = 0.0
+    if loop1.get("completion_time_mean", 0.0) > 0:
+        completion_time_improvement = (
+            loop1["completion_time_mean"] - loop2.get("completion_time_mean", 0.0)
+        ) / loop1["completion_time_mean"]
 
-    # Path efficiency = straight_line / actual_path (0 if no positions)
-    path_efficiency = 0.0
-    if len(positions) > 1 and path_length > 0:
-        straight_line = float(np.linalg.norm(np.array(positions[-1]) - np.array(positions[0])))
-        path_efficiency = min(straight_line / path_length, 1.0)
-
-    return EvaluationMetrics(
-        success=success,
-        completion_time=completion_time,
-        path_length=path_length,
-        collision_count=collision_count,
-        step_count=step_count,
-        trajectory=trajectory,
-        info={
-            "total_reward": total_reward,
-            "path_efficiency": path_efficiency,
-            "time_efficiency": min(completion_time / time_limit, 1.0) if time_limit > 0 else 0.0,
-        },
+    evolution_score = (
+        0.4 * delta_success_rate
+        + 0.2 * mie_score
+        + 0.2 * skill_discovery_rate
+        + 0.1 * completion_time_improvement
+        + 0.1 * robustness_gain
     )
+
+    return {
+        "delta_success_rate": delta_success_rate,
+        "memory_integration_efficiency_raw": mie_raw,
+        "memory_integration_efficiency_score": mie_score,
+        "memory_integration_efficiency_available": mie_available,
+        "skill_discovery_rate": skill_discovery_rate,
+        "robustness_gain": robustness_gain,
+        "completion_time_improvement": completion_time_improvement,
+        "evolution_score": evolution_score,
+    }

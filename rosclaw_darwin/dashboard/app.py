@@ -1,170 +1,164 @@
-"""Minimal EEIB Dashboard using FastAPI.
-
-Serves a JSON API for leaderboard data and a static HTML page
-that renders the EEIB leaderboard with SDR / MIE / SSI metrics.
-"""
+"""Dashboard using FastAPI + Jinja2."""
 
 from __future__ import annotations
 
+import glob
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-
-
-@dataclass
-class LeaderboardEntry:
-    agent_name: str
-    model: str
-    sdr: float = 0.0  # Skill Discovery Rate
-    mie: float = 0.0  # Memory Integration Efficiency
-    ssi: float = 0.0  # Swarm Synergy Index
-    evolution_score: float = 0.0
-    tasks_evaluated: int = 0
-    timestamp: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+from fastapi.templating import Jinja2Templates
 
 
 class DashboardApp:
-    """FastAPI-based EEIB leaderboard dashboard."""
+    """FastAPI-based Darwin dashboard with Jinja2 templates."""
 
     def __init__(self, data_dir: str | None = None):
-        self.app = FastAPI(title="ROSClaw-Darwin EEIB", version="0.1.0")
-        self.entries: list[LeaderboardEntry] = []
-        self.data_dir = Path(data_dir) if data_dir else Path.cwd() / "darwin_results"
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.app = FastAPI(title="ROSClaw-Darwin", version="0.1.0")
+        self.data_dir = Path(data_dir) if data_dir else Path.cwd() / "data"
+        self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
         self._setup_routes()
-        self._load_existing()
 
     def _setup_routes(self) -> None:
         @self.app.get("/", response_class=HTMLResponse)
-        async def index() -> str:
-            return self._render_html()
+        async def index(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "overview.html", {
+                "runs": self._load_runs(),
+                "evolution_runs": self._load_evolution_runs(),
+                "tasks": self._load_tasks(),
+                "skills": self._load_skills(),
+                "leaderboard": self._load_leaderboard(),
+            })
 
+        @self.app.get("/runs", response_class=HTMLResponse)
+        async def runs_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "runs.html", {
+                "runs": self._load_runs(),
+            })
+
+        @self.app.get("/evolution", response_class=HTMLResponse)
+        async def evolution_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "evolution.html", {
+                "evolution_runs": self._load_evolution_runs(),
+            })
+
+        @self.app.get("/tasks", response_class=HTMLResponse)
+        async def tasks_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "tasks.html", {
+                "tasks": self._load_tasks(),
+            })
+
+        @self.app.get("/task-graph", response_class=HTMLResponse)
+        async def task_graph_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "task_graph.html", {
+                "graph": self._load_task_graph(),
+            })
+
+        @self.app.get("/skills", response_class=HTMLResponse)
+        async def skills_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "skills.html", {
+                "skills": self._load_skills(),
+            })
+
+        @self.app.get("/failures", response_class=HTMLResponse)
+        async def failures_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "failures.html", {
+                "failures": self._load_failures(),
+            })
+
+        @self.app.get("/leaderboard", response_class=HTMLResponse)
+        async def leaderboard_page(request: Request) -> Any:
+            entries = self._load_leaderboard()
+            return self.templates.TemplateResponse(request, "leaderboard.html", {
+                "leaderboard": entries,
+            })
+
+        # JSON API endpoints
         @self.app.get("/api/leaderboard")
-        async def get_leaderboard() -> JSONResponse:
-            return JSONResponse(
-                content={
-                    "entries": [
-                        {
-                            "agent_name": e.agent_name,
-                            "model": e.model,
-                            "sdr": round(e.sdr, 4),
-                            "mie": round(e.mie, 4),
-                            "ssi": round(e.ssi, 4),
-                            "evolution_score": round(e.evolution_score, 4),
-                            "tasks_evaluated": e.tasks_evaluated,
-                            "timestamp": e.timestamp,
-                        }
-                        for e in sorted(self.entries, key=lambda x: x.evolution_score, reverse=True)
-                    ]
-                }
-            )
+        async def api_leaderboard() -> JSONResponse:
+            return JSONResponse(content={"entries": self._load_leaderboard()})
 
-        @self.app.post("/api/submit")
-        async def submit_result(data: dict[str, Any]) -> JSONResponse:
-            entry = LeaderboardEntry(
-                agent_name=data.get("agent_name", "unknown"),
-                model=data.get("model", "unknown"),
-                sdr=data.get("sdr", 0.0),
-                mie=data.get("mie", 0.0),
-                ssi=data.get("ssi", 0.0),
-                evolution_score=data.get("evolution_score", 0.0),
-                tasks_evaluated=data.get("tasks_evaluated", 0),
-                timestamp=data.get("timestamp", ""),
-                metadata=data.get("metadata", {}),
-            )
-            self.entries.append(entry)
-            self._persist(entry)
-            return JSONResponse(content={"status": "ok", "rank": len(self.entries)})
+        @self.app.get("/api/runs")
+        async def api_runs() -> JSONResponse:
+            return JSONResponse(content={"runs": self._load_runs()})
 
-        @self.app.get("/api/evolution/{task_id}")
-        async def get_evolution(task_id: str) -> JSONResponse:
-            path = self.data_dir / f"{task_id}.json"
-            if not path.exists():
-                return JSONResponse(content={"error": "not found"}, status_code=404)
-            return JSONResponse(content=json.loads(path.read_text()))
-
-    def _render_html(self) -> str:
-        return """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ROSClaw-Darwin EEIB Leaderboard</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 2rem; }
-        h1 { color: #1a1a2e; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background: #16213e; color: white; }
-        tr:hover { background: #f5f5f5; }
-        .metric { font-family: monospace; font-weight: bold; }
-        .rank-1 { background: #ffd700 !important; }
-        .rank-2 { background: #c0c0c0 !important; }
-        .rank-3 { background: #cd7f32 !important; }
-        .subtitle { color: #666; margin-top: -0.5rem; }
-    </style>
-</head>
-<body>
-    <h1>🏆 ROSClaw-Darwin EEIB Leaderboard</h1>
-    <p class="subtitle">Evolutionary Embodied Intelligence Benchmark — measuring how fast agents evolve, not how strong they are.</p>
-    <div id="content">Loading...</div>
-    <script>
-        async function load() {
-            const res = await fetch('/api/leaderboard');
-            const data = await res.json();
-            const entries = data.entries;
-            if (entries.length === 0) {
-                document.getElementById('content').innerHTML = '<p>No submissions yet. Run an evolution evaluation to populate the leaderboard.</p>';
-                return;
-            }
-            let html = '<table><tr><th>Rank</th><th>Agent</th><th>Model</th><th>Evolution Score</th><th>SDR</th><th>MIE</th><th>SSI</th><th>Tasks</th><th>Timestamp</th></tr>';
-            entries.forEach((e, i) => {
-                const cls = i < 3 ? `rank-${i+1}` : '';
-                html += `<tr class="${cls}"><td>#${i+1}</td><td>${e.agent_name}</td><td>${e.model}</td><td class="metric">${e.evolution_score}</td><td class="metric">${e.sdr}</td><td class="metric">${e.mie}</td><td class="metric">${e.ssi}</td><td>${e.tasks_evaluated}</td><td>${e.timestamp}</td></tr>`;
-            });
-            html += '</table>';
-            document.getElementById('content').innerHTML = html;
-        }
-        load();
-    </script>
-</body>
-</html>
-        """
-
-    def _persist(self, entry: LeaderboardEntry) -> None:
-        path = self.data_dir / f"entry_{entry.agent_name}_{entry.timestamp}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "agent_name": entry.agent_name,
-                    "model": entry.model,
-                    "sdr": entry.sdr,
-                    "mie": entry.mie,
-                    "ssi": entry.ssi,
-                    "evolution_score": entry.evolution_score,
-                    "tasks_evaluated": entry.tasks_evaluated,
-                    "timestamp": entry.timestamp,
-                    "metadata": entry.metadata,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-    def _load_existing(self) -> None:
-        for path in self.data_dir.glob("entry_*.json"):
+    def _load_runs(self) -> list[dict]:
+        runs: list[dict] = []
+        for f in glob.glob(str(self.data_dir / "runs" / "*" / "run.json")):
             try:
-                data = json.loads(path.read_text())
-                self.entries.append(LeaderboardEntry(**data))
+                runs.append(json.loads(Path(f).read_text()))
             except Exception:
                 pass
+        return runs
+
+    def _load_evolution_runs(self) -> list[dict]:
+        runs: list[dict] = []
+        for f in glob.glob(str(self.data_dir / "evolution_runs" / "*" / "evolution_report.json")):
+            try:
+                runs.append(json.loads(Path(f).read_text()))
+            except Exception:
+                pass
+        return runs
+
+    def _load_tasks(self) -> list[dict]:
+        tasks: list[dict] = []
+        for f in glob.glob(str(self.data_dir / "tasks" / "**" / "*.yaml"), recursive=True):
+            try:
+                import yaml
+                tasks.append(yaml.safe_load(Path(f).read_text()))
+            except Exception:
+                pass
+        return tasks
+
+    def _load_task_graph(self) -> dict:
+        nodes = []
+        edges = []
+        for t in self._load_tasks():
+            nodes.append({"id": t.get("id"), "name": t.get("name")})
+            for p in t.get("parents", []):
+                edges.append({"source": p, "target": t.get("id")})
+        return {"nodes": nodes, "edges": edges}
+
+    def _load_skills(self) -> list[dict]:
+        path = self.data_dir / "skills" / "registry.json"
+        if path.exists():
+            try:
+                return json.loads(path.read_text()).get("skills", [])
+            except Exception:
+                pass
+        return []
+
+    def _load_failures(self) -> dict[str, int]:
+        failures: dict[str, int] = {}
+        for run in self._load_runs() + self._load_evolution_runs():
+            for ft, count in run.get("failure_types", {}).items():
+                failures[ft] = failures.get(ft, 0) + count
+        return failures
+
+    def _load_leaderboard(self) -> list[dict]:
+        entries: list[dict] = []
+        for evo in self._load_evolution_runs():
+            metrics = evo.get("evolution_metrics", {})
+            loops = evo.get("loop_results", [])
+            success_rate = loops[-1].get("metrics", {}).get("success_rate", 0) if loops else 0
+            entries.append({
+                "task_id": evo.get("task_id"),
+                "evolution_score": metrics.get("evolution_score", 0),
+                "delta_success_rate": metrics.get("delta_success_rate", 0),
+                "memory_integration_efficiency_score": metrics.get("memory_integration_efficiency_score", 0),
+                "memory_integration_efficiency_available": metrics.get("memory_integration_efficiency_available", False),
+                "success_rate": success_rate,
+            })
+        entries.sort(key=lambda x: (
+            x.get("evolution_score", 0),
+            x.get("delta_success_rate", 0),
+            x.get("memory_integration_efficiency", 0),
+            x.get("success_rate", 0),
+        ), reverse=True)
+        return entries
 
     def run(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         import uvicorn
-
         uvicorn.run(self.app, host=host, port=port)

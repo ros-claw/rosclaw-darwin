@@ -1,0 +1,66 @@
+id: darwin_kitchen_prepare_breakfast_v001
+name: Prepare simple breakfast
+description: Take milk from fridge and place on table.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: kitchen
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: fridge
+    category: appliance
+    affordances: [openable, container]
+  - name: milk
+    category: grocery
+    affordances: [graspable, movable]
+  - name: table
+    category: furniture
+    affordances: [surface]
+
+primitives:
+  - name: open
+    args:
+      target: fridge
+    postconditions:
+      - is_open(fridge)
+  - name: grasp
+    args:
+      target: milk
+    postconditions:
+      - holding(milk)
+  - name: place
+    args:
+      object: milk
+      target: table
+    postconditions:
+      - on(milk, table)
+
+eval:
+  success_conditions:
+    - on(milk, table)
+  failure_conditions:
+    - milk_dropped
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 2000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - object_position
+    - object_instance
+    - distractor_objects
+  difficulty: 2
+
+tags:
+  - kitchen
+  - long_horizon

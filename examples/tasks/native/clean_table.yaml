@@ -1,0 +1,48 @@
+id: darwin_mvp_16_clean_table
+name: Clean Table
+description: Clean Table task.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: default
+  domain: kitchen
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: cloth
+    affordances: [graspable]
+  - name: table
+    affordances: [surface]
+  - name: bin
+    affordances: [container]
+
+primitives:
+  - name: grasp
+  - name: place
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - kitchen

@@ -1,0 +1,1 @@
+from isaaclab_physx.physics.physx_manager_cfg import PhysxCfg

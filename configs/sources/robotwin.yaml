@@ -1,0 +1,4 @@
+name: robotwin
+repo_env: ROBOTWIN_REPO
+default_path: /data/repos/RoboTwin
+branch: IsaacLab-Arena

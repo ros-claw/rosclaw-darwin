@@ -1,0 +1,4 @@
+policy_id: zero_action
+type: zero
+strength: 0.3
+memory_bonus: 0.0

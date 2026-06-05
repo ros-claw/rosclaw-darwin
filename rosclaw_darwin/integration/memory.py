@@ -1,113 +1,75 @@
-"""Bridge between Darwin evaluation and rosclaw-memory (SeekDB).
-
-Darwin uses this bridge to:
-  1. Query past experiences before evaluation (contextual priming).
-  2. Verify memory formation after evaluation (evolution tracking).
-"""
+"""MemoryBridge: record and query experiences."""
 
 from __future__ import annotations
 
-import os
+import json
+import time
+from pathlib import Path
 from typing import Any
+
+from rosclaw_darwin.evaluation.result import EvaluationResult
+from rosclaw_darwin.tdl.schema import Task
 
 
 class MemoryBridge:
-    """Query and verify SeekDB collections for evolutionary analysis."""
+    """File-based memory bridge for experiences."""
 
-    def __init__(self, mode: str | None = None):
-        self.mode = (mode or os.getenv("SEEKDB_MODE", "embedded")).strip().lower()
-        self._client: Any | None = None
-
-    def _lazy_init(self) -> bool:
-        if self._client is not None:
-            return True
+    def __init__(self, mode: str = "file", path: str | None = None):
+        self.mode = mode
+        self._path = Path(path) if path else Path("data/memory/darwin_experiences.jsonl")
         try:
-            import pyseekdb  # type: ignore[import-untyped]
-            if self.mode == "server":
-                self._client = pyseekdb.RemoteServerClient(
-                    host=os.getenv("SEEKDB_HOST", "localhost"),
-                    port=int(os.getenv("SEEKDB_PORT", "2881")),
-                    tenant=os.getenv("SEEKDB_TENANT", "rosclaw"),
-                    database=os.getenv("SEEKDB_DATABASE", "rosclaw_darwin"),
-                )
-            else:
-                path = os.getenv("SEEKDB_PATH", "/data/seekdb/darwin")
-                os.makedirs(path, exist_ok=True)
-                self._client = pyseekdb.Client(path=path, database="rosclaw_darwin")
-            return True
-        except ImportError:
-            return False
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            import tempfile
+            self._path = Path(tempfile.gettempdir()) / "rosclaw_darwin" / "darwin_experiences.jsonl"
+            self._path.parent.mkdir(parents=True, exist_ok=True)
 
-    def query(self, query_text: str, n_results: int = 5) -> list[dict[str, Any]]:
-        """Search SeekDB for experiences related to query_text."""
-        if not self._lazy_init():
+    def record_experience(self, task: Task, result: EvaluationResult) -> str:
+        record = {
+            "task_id": task.id,
+            "run_id": result.run_id,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "metrics": result.metrics,
+            "failure_types": result.failure_types,
+            "adapter": result.adapter,
+        }
+        with open(self._path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return result.run_id
+
+    def query_experiences(
+        self,
+        task: Task,
+        failure_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if not self._path.exists():
             return []
-        try:
-            col = self._client.get_or_create_collection(name="darwin_experiences")
-            results = col.query(query_texts=[query_text], n_results=n_results)
-            # Normalise pyseekdb result shape to a flat list of dicts.
-            memories: list[dict[str, Any]] = []
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            dists = results.get("distances", [[]])[0]
-            for d, m, dist in zip(docs, metas, dists):
-                memories.append({"text": d, "metadata": m, "distance": dist})
-            return memories
-        except Exception as exc:
-            return [{"error": str(exc)}]
+        results: list[dict[str, Any]] = []
+        with open(self._path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("task_id") == task.id:
+                        if failure_type is None or failure_type in rec.get("failure_types", {}):
+                            results.append(rec)
+                except json.JSONDecodeError:
+                    continue
+        return results
 
-    def record_experience(
-        self,
-        task_id: str,
-        session_id: str,
-        outcome: str,
-        metrics: dict[str, Any],
-    ) -> bool:
-        """Write an evaluation outcome into SeekDB for future retrieval."""
-        if not self._lazy_init():
-            return False
-        try:
-            col = self._client.get_or_create_collection(name="darwin_experiences")
-            text = f"Task {task_id}: {outcome}. Steps={metrics.get('step_count', 0)} Success={metrics.get('success', False)}"
-            col.add(
-                documents=[text],
-                metadatas=[{"task_id": task_id, "session_id": session_id, "outcome": outcome}],
-                ids=[session_id],
-            )
-            return True
-        except Exception:
-            return False
+    def consolidate(self, task: Task) -> dict[str, Any]:
+        """Consolidate experiences for a task and compute memory bonus."""
+        experiences = self.query_experiences(task)
+        if not experiences:
+            return {"memory_bonus": 0.0, "count": 0}
 
-    def verify_evolution(
-        self,
-        task_id: str,
-        before_session: str,
-        after_session: str,
-    ) -> dict[str, Any]:
-        """Check whether the after_session shows improvement over before_session.
-
-        Returns a dict with keys:
-            improved: bool
-            delta: float          # metric improvement
-            causal_edges: list    # newly formed causal edges in SeekDB
-        """
-        if not self._lazy_init():
-            return {"improved": False, "delta": 0.0, "causal_edges": [], "error": "SeekDB unavailable"}
-
-        before = self.query(f"task_id:{task_id} session_id:{before_session}", n_results=1)
-        after = self.query(f"task_id:{task_id} session_id:{after_session}", n_results=1)
-
-        if not before or not after:
-            return {"improved": False, "delta": 0.0, "causal_edges": [], "error": "Missing sessions"}
-
-        b_meta = before[0].get("metadata", {})
-        a_meta = after[0].get("metadata", {})
-        b_success = b_meta.get("outcome") == "success"
-        a_success = a_meta.get("outcome") == "success"
-        improved = (not b_success) and a_success
-
+        # Simple heuristic: if previous failures exist, provide memory bonus
+        failures = sum(1 for e in experiences if e.get("metrics", {}).get("success_rate", 1.0) < 0.5)
+        memory_bonus = min(0.3, 0.05 * failures)
         return {
-            "improved": improved,
-            "delta": 1.0 if improved else 0.0,
-            "causal_edges": [],
+            "memory_bonus": memory_bonus,
+            "count": len(experiences),
+            "failures": failures,
         }

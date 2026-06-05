@@ -1,73 +1,30 @@
-# ROSClaw-Darwin Docker Image
-# Built on top of IsaacLab-Arena base image.
-#
-# This Dockerfile adds rosclaw-darwin and its ecosystem integration
-# to the pre-built IsaacLab-Arena environment.
-#
-# Usage:
-#   docker build -f docker/Dockerfile -t rosclaw-darwin:latest .
-#   docker run --gpus all --rm -it rosclaw-darwin:latest
+# ROSClaw-Darwin Dockerfile
+# Multi-stage: mock-dev | arena-dev | full
 
-ARG BASE_IMAGE=rosclaw-darwin:arena-base
+FROM python:3.10-slim AS base
+WORKDIR /workspace/rosclaw-darwin
+COPY pyproject.toml README.md ./
+COPY rosclaw_darwin/ ./rosclaw_darwin/
+RUN pip install --no-cache-dir -e ".[dev]"
 
-FROM ${BASE_IMAGE}
+# --- mock-dev target ---
+FROM base AS mock
+COPY examples/ ./examples/
+COPY configs/ ./configs/
+COPY tests/ ./tests/
+CMD ["darwin", "dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
-USER root
+# --- arena-dev target ---
+FROM nvcr.io/nvidia/isaac-sim:4.2.0 AS arena
+WORKDIR /workspace/rosclaw-darwin
+COPY --from=base /workspace/rosclaw-darwin /workspace/rosclaw-darwin
+COPY examples/ ./examples/
+COPY configs/ ./configs/
+ENV ROSCLAW_ARENA_MODE=real
+CMD ["tail", "-f", "/dev/null"]
 
-# -----------------------------------------------------------------------------
-# Environment
-# -----------------------------------------------------------------------------
-ENV WORKDIR=/workspace
-ENV ROSCLAW_DARWIN_PATH=/workspace/rosclaw-darwin
-ENV PYTHONPATH="${ROSCLAW_DARWIN_PATH}:${PYTHONPATH}"
-ENV ROSCLAW_PRACTICE_MCAP_DIR=/data/rosclaw/mcap
-ENV ROSCLAW_PRACTICE_FALLBACK_DIR=/data/rosclaw/fallback
-ENV SEEKDB_MODE=embedded
-ENV SEEKDB_PATH=/data/seekdb/darwin
-
-# -----------------------------------------------------------------------------
-# Install rosclaw-darwin
-# -----------------------------------------------------------------------------
-WORKDIR ${WORKDIR}
-
-# Copy rosclaw-darwin source
-COPY . ${ROSCLAW_DARWIN_PATH}
-
-# Install rosclaw-darwin package
-RUN /isaac-sim/python.sh -m pip install -e "${ROSCLAW_DARWIN_PATH}"
-
-# Install dashboard dependencies if needed
-RUN /isaac-sim/python.sh -m pip install fastapi uvicorn
-
-# Install SeekDB (rosclaw-memory) dependencies for embedded mode
-RUN /isaac-sim/python.sh -m pip install sqlalchemy pyobvector pydantic-settings rank-bm25
-
-# Create data directories
-RUN mkdir -p /data/rosclaw/mcap /data/rosclaw/fallback /data/seekdb/darwin
-
-# -----------------------------------------------------------------------------
-# Install rosclaw ecosystem (optional, for full integration)
-# -----------------------------------------------------------------------------
-# These are installed from the local ros-claw repos if available.
-# If not available, the bridges gracefully fall back to mock mode.
-
-# Install rosclaw-practice
-RUN if [ -d /workspace/rosclaw-practice ]; then \
-        /isaac-sim/python.sh -m pip install -e /workspace/rosclaw-practice; \
-    fi
-
-# Install rosclaw-memory
-RUN if [ -d /workspace/rosclaw-memory ]; then \
-        /isaac-sim/python.sh -m pip install -e /workspace/rosclaw-memory; \
-    fi
-
-# -----------------------------------------------------------------------------
-# Entrypoint
-# -----------------------------------------------------------------------------
-COPY docker/entrypoint.sh /rosclaw-entrypoint.sh
-RUN chmod +x /rosclaw-entrypoint.sh
-
-WORKDIR ${ROSCLAW_DARWIN_PATH}
-
-ENTRYPOINT ["/rosclaw-entrypoint.sh"]
-CMD ["/bin/bash"]
+# --- full target (placeholder) ---
+FROM arena AS full
+# Additional heavy dependencies (LW-BenchHub, RoboTwin) mounted at runtime
+ENV ROSCLAW_ARENA_MODE=real
+CMD ["tail", "-f", "/dev/null"]

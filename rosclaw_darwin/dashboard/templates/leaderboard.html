@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🏆 Evolution Leaderboard</h1></div>
+{% if leaderboard %}
+<div class="card">
+  <table>
+    <tr><th>Rank</th><th>Task</th><th>Evolution Score</th><th>Δ Success Rate</th><th>MIE</th><th>Success Rate</th></tr>
+    {% for entry in leaderboard %}
+    <tr class="{% if loop.index <= 3 %}rank-{{ loop.index }}{% endif %}">
+      <td>#{{ loop.index }}</td>
+      <td>{{ entry.task_id }}</td>
+      <td class="metric">{{ "%.4f"|format(entry.evolution_score) }}</td>
+      <td class="metric">{{ "%.4f"|format(entry.delta_success_rate) }}</td>
+      <td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency) }}</td>
+      <td class="metric">{{ "%.2f"|format(entry.success_rate * 100) }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card"><p>No entries yet. Run evolution evaluations to populate the leaderboard.</p></div>
+{% endif %}
+{% endblock %}

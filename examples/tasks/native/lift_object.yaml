@@ -1,0 +1,44 @@
+id: darwin_mvp_03_lift_object
+name: Lift Object
+description: Lift Object task.
+source: native
+domain: manipulation
+horizon: atomic
+
+scene:
+  name: default
+  domain: manipulation
+
+embodiment:
+  robot: unitree_g1
+  control_mode: whole_body
+
+objects:
+  - name: cube
+    affordances: [graspable]
+
+primitives:
+  - name: grasp
+  - name: lift
+
+eval:
+  success_conditions:
+    - task_completed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - manipulation
