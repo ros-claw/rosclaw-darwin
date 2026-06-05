@@ -973,6 +973,13 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 task_id=self.task.id,
                 policy_id=policy_config.get("policy_id", "unknown"),
             )
+            # Synthetic metrics: Arena zero_action + num_steps does not produce
+            # structured metrics, but we know the job config and completion status.
+            if result.status == "completed" and not result.metrics:
+                result.metrics = {
+                    "num_steps": float(job.get("num_steps", 0)),
+                    "status": 1.0,
+                }
             return result
 
         arena_repo = self._get_arena_repo()
