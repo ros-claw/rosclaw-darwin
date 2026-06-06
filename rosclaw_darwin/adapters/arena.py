@@ -940,6 +940,9 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             # Episode-based evaluation when episodes is specified;
             # otherwise fall back to step-based for quick smoke tests.
             policy_type = policy_config.get("policy_type") or policy_config.get("type", "zero_action")
+            # Map ROSClaw short type names to Arena policy names.
+            _TYPE_MAP = {"zero": "zero_action", "replay": "replay_action"}
+            policy_type = _TYPE_MAP.get(policy_type, policy_type)
             # Map short policy names to full module paths for dynamic import in container.
             # heuristic_policy.py is mounted at /workspace/data/heuristic_policy.py and
             # /workspace/data is on sys.path inside the container.
@@ -989,6 +992,11 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                     "headless": self.headless,
                     "timeout_seconds": 1200,
                 }
+            # Allow task metadata to override Arena env args (e.g. pick a stable environment)
+            meta_env_args = self.task.metadata.get("arena_env_args")
+            if meta_env_args and isinstance(meta_env_args, dict):
+                job["arena_env_args"].update(meta_env_args)
+
             # Merge native config from task provenance if available
             native_config = {}
             if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):

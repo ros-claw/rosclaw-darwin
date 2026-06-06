@@ -55,6 +55,7 @@ class EvolutionRunner:
         task: Task,
         policy_config: dict,
         loops: int = 2,
+        episodes: int | None = None,
     ) -> dict[str, Any]:
         """Run the full evolution loop.
 
@@ -64,7 +65,7 @@ class EvolutionRunner:
         loop_results: list[EvaluationResult] = []
 
         # --- Loop 1: First Encounter ---
-        result1 = self.adapter.run_policy(policy_config)
+        result1 = self.adapter.run_policy(policy_config, episodes=episodes)
         loop_results.append(result1)
 
         # Practice event
@@ -98,7 +99,7 @@ class EvolutionRunner:
         # --- Loop 2: Retry after learning ---
         policy2 = copy.deepcopy(policy_config)
         policy2["memory_bonus"] = memory_bonus
-        result2 = self.adapter.run_policy(policy2)
+        result2 = self.adapter.run_policy(policy2, episodes=episodes)
         loop_results.append(result2)
 
         self.practice.submit_event(result2, task)

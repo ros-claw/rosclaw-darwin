@@ -39,6 +39,12 @@ mutation:
     - constraint
   difficulty: 1
 
+metadata:
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    background: procedural_table
+
 tags:
   - mvp
   - manipulation
