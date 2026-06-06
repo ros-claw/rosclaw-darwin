@@ -948,6 +948,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             # /workspace/data is on sys.path inside the container.
             if policy_type == "heuristic_lift":
                 policy_type = "heuristic_policy.HeuristicLiftPolicy"
+            if policy_type == "cube_goal_pose_heuristic":
+                policy_type = "heuristic_policy.CubeGoalPoseHeuristicPolicy"
             # For heuristic policies use step-based rollout so we can observe
             # behaviour across multiple steps even if episodes end early.
             if policy_type == "heuristic_policy.HeuristicLiftPolicy":
@@ -990,7 +992,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                     "policy_type": policy_type,
                     "policy_config_dict": policy_config.get("policy_config_dict", {}),
                     "headless": self.headless,
-                    "timeout_seconds": 1200,
+                    "timeout_seconds": 3600,
                 }
             # Allow task metadata to override Arena env args (e.g. pick a stable environment)
             meta_env_args = self.task.metadata.get("arena_env_args")

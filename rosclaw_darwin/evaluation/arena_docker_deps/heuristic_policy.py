@@ -75,3 +75,62 @@ class HeuristicLiftPolicy(PolicyBase):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "HeuristicLiftPolicy":
         return HeuristicLiftPolicy(HeuristicLiftPolicyArgs.from_cli_args(args))
+
+
+class CubeGoalPoseHeuristicPolicy(PolicyBase):
+    """Heuristic for cube_goal_pose: grasp, lift, and rotate yaw 90°.
+
+    Target orientation (0,0,0.7071,0.7071) = yaw 90°.
+    With relative IK mode and scale=0.5, action = 2 * delta_quat.
+    """
+
+    name = "cube_goal_pose_heuristic"
+    config_class = HeuristicLiftPolicyArgs
+
+    def __init__(self, config: HeuristicLiftPolicyArgs):
+        super().__init__(config)
+        self._step = 0
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        step = self._step
+        self._step += 1
+
+        delta_z = 0.04
+        target_qz = 1.4142  # 0.7071 * 2
+        target_qw = 1.4142
+
+        if step < 30:
+            # descend
+            action[..., 2] = -delta_z
+            action[..., -1] = 1.0
+        elif step < 40:
+            # grasp
+            action[..., 2] = 0.0
+            action[..., -1] = -1.0
+        elif step < 50:
+            # rotate yaw 90° (no translation)
+            action[..., 5] = target_qz
+            action[..., 6] = target_qw
+            action[..., -1] = -1.0
+        elif step < 80:
+            # lift up
+            action[..., 2] = delta_z
+            action[..., -1] = -1.0
+        else:
+            # hold
+            action[..., 2] = 0.0
+            action[..., -1] = -1.0
+        return action
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        self._step = 0
+
+    @staticmethod
+    def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        return parser
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "CubeGoalPoseHeuristicPolicy":
+        return CubeGoalPoseHeuristicPolicy(HeuristicLiftPolicyArgs.from_cli_args(args))
