@@ -46,3 +46,9 @@ mutation:
 tags:
   - mvp
   - kitchen
+
+metadata:
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    background: procedural_table

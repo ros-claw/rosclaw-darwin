@@ -231,6 +231,7 @@ def evolve(
     task: str = typer.Option(..., "--task", help="Path to task YAML"),
     policy: str = typer.Option("configs/policies/zero_action.yaml", "--policy", help="Path to policy config"),
     loops: int = typer.Option(2, "--loops", help="Number of evolution loops"),
+    episodes: int = typer.Option(20, "--episodes", help="Number of episodes per loop"),
     out: str = typer.Option("data/evolution_runs", "--out", help="Output directory"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run (arena only: generate command without executing)"),
     seed: int | None = typer.Option(None, "--seed", help="Random seed for deterministic mock evolution"),
@@ -259,7 +260,7 @@ def evolve(
         raise typer.Exit(1)
 
     runner = EvolutionRunner(env)
-    report = runner.evolve(t, policy_config, loops=loops)
+    report = runner.evolve(t, policy_config, loops=loops, episodes=episodes)
 
     run_dir = ensure_dir(out) / report["run_id"]
     save_evolution_report(
