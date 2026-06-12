@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
 from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
 
 from .base import SourceImporter
@@ -56,6 +57,9 @@ class RoboTwinImporter(SourceImporter):
         name = record["task_name"]
         task_id = f"robotwin_{name.lower().replace(' ', '_')}"
         data_dir = record.get("data_dir", "")
+        objects = [ObjectSpec(name="object", affordances=["graspable", "movable"])]
+        objects = enrich_objects(objects)
+        primitives = infer_primitives(name=name, objects=objects)
         return Task(
             id=task_id,
             name=name.replace("_", " ").title(),
@@ -64,7 +68,8 @@ class RoboTwinImporter(SourceImporter):
             horizon="short",
             scene=SceneSpec(name="workspace"),
             embodiment=EmbodimentSpec(robot="robotwin_default_bimanual"),
-            objects=[ObjectSpec(name="object", affordances=["graspable", "movable"])],
+            objects=objects,
+            primitives=primitives,
             eval=EvalSpec(max_steps=1000, max_episodes=20),
             provenance=ProvenanceSpec(
                 source=TaskSource.robotwin,

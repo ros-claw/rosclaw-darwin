@@ -26,15 +26,33 @@ class LiftObjectEnvironment(ExampleEnvironmentBase):
         from isaaclab_arena.scene.scene import Scene
         from isaaclab_arena.tasks.lift_object_task import LiftObjectTaskRL
         from isaaclab_arena.utils.pose import Pose
+        from isaaclab_arena.assets.object import Object
+        from isaaclab_arena.assets.object_base import ObjectType
+        import isaaclab.sim as sim_utils
 
-        background = self.asset_registry.get_asset_by_name("procedural_table")()
+        # Create table as a static BASE asset with explicit box collision.
+        # Using ObjectType.BASE avoids IsaacLab's RigidObject kinematic bug in Isaac Sim 5.1.
+        table = Object(
+            name="table",
+            prim_path="{ENV_REGEX_NS}/table",
+            object_type=ObjectType.BASE,
+            spawner_cfg=sim_utils.CuboidCfg(
+                size=(0.8, 1.5, 0.04),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True, contact_offset=0.005),
+                visible=True,
+                physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.5, dynamic_friction=0.5),
+            ),
+            initial_pose=Pose(position_xyz=(0.5, 0, -0.02), rotation_xyzw=(0, 0, 0.707, 0.707)),
+        )
+        table.object_min_z = -0.05
+
         pick_up_object = self.asset_registry.get_asset_by_name(args_cli.object)()
 
         # Add ground plane and light to the scene
         ground_plane = self.asset_registry.get_asset_by_name("ground_plane")()
         light = self.asset_registry.get_asset_by_name("light")()
 
-        assets = [background, pick_up_object, ground_plane, light]
+        assets = [table, pick_up_object, ground_plane, light]
 
         embodiment = self.asset_registry.get_asset_by_name(args_cli.embodiment)(concatenate_observation_terms=True)
 
@@ -44,17 +62,15 @@ class LiftObjectEnvironment(ExampleEnvironmentBase):
             teleop_device = None
 
         # Set all positions
-        background.set_initial_pose(Pose(position_xyz=(0.5, 0, 0), rotation_xyzw=(0, 0, 0.707, 0.707)))
         pick_up_object.set_initial_pose(Pose(position_xyz=(0.5, 0, 0.055), rotation_xyzw=(0, 0, 0, 1)))
         ground_plane.set_initial_pose(Pose(position_xyz=(0.0, 0.0, -1.05)))
 
         # Compose the scene
-        # If using for an IL task, add the goal position as a marker to the scene
         scene = Scene(assets=assets)
 
         task = LiftObjectTaskRL(
             pick_up_object,
-            background,
+            table,
             embodiment,
             minimum_height_to_lift=0.04,
             episode_length_s=5.0,
@@ -76,11 +92,7 @@ class LiftObjectEnvironment(ExampleEnvironmentBase):
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--object", type=str, default="dex_cube")
-        # NOTE(alexmillane, 2025.09.04): We need a teleop device argument in order
-        # to be used in the record_demos.py script.
         parser.add_argument("--teleop_device", type=str, default=None)
-        # For RL training, joint model gives better success rate than IK model.
-        # The IK model tends to stuck in degenerate poses.
         parser.add_argument("--embodiment", type=str, default="franka_joint_pos")
         parser.add_argument(
             "--rl_training_mode",

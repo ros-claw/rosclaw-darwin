@@ -1,0 +1,4 @@
+policy_id: cheat_cube_goal_pose
+type: cheat_cube_goal_pose
+strength: 1.0
+memory_bonus: 0.0

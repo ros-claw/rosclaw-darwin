@@ -5,10 +5,12 @@
 <tr><td>Evolution Runs</td><td class="metric">{{ evolution_runs|length }}</td></tr>
 <tr><td>Tasks</td><td class="metric">{{ tasks|length }}</td></tr>
 <tr><td>Discovered Skills</td><td class="metric">{{ skills|length }}</td></tr>
+<tr><td>Skill Candidates</td><td class="metric">{{ candidates|length }}</td></tr>
+<tr><td>Experiences</td><td class="metric">{{ memories|length }}</td></tr>
 </table></div>
 <div class="card"><h2>Leaderboard Top 5</h2>
 {% if leaderboard %}<table><tr><th>Rank</th><th>Task</th><th>Score</th><th>Δ Success</th><th>MIE</th></tr>
-{% for entry in leaderboard[:5] %}<tr class="rank-{{ loop.index }}"><td>#{{ loop.index }}</td><td>{{ entry.task_id }}</td><td class="metric">{{ "%.4f"|format(entry.evolution_score) }}</td><td class="metric">{{ "%.4f"|format(entry.delta_success_rate) }}</td><td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency) }}</td></tr>
+{% for entry in leaderboard[:5] %}<tr class="rank-{{ loop.index }}"><td>#{{ loop.index }}</td><td>{{ entry.task_id }}</td><td class="metric">{{ "%.4f"|format(entry.evolution_score) }}</td><td class="metric">{{ "%.4f"|format(entry.delta_success_rate) }}</td><td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency_score) }}</td></tr>
 {% endfor %}</table>
 {% else %}<p>No evolution runs yet.</p>
 {% endif %}</div>

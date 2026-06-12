@@ -1,0 +1,4 @@
+policy_id: cube_goal_pose_heuristic
+type: cube_goal_pose_heuristic
+strength: 0.6
+memory_bonus: 0.0

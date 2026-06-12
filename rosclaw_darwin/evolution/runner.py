@@ -72,7 +72,7 @@ class EvolutionRunner:
         self.practice.submit_event(result1, task)
 
         # Memory record
-        self.memory.record_experience(task, result1)
+        self.memory.record_experience(task, result1, evolution_run_id=run_id)
 
         # How: skill extraction
         experiences = self.memory.query_experiences(task)
@@ -103,7 +103,14 @@ class EvolutionRunner:
         loop_results.append(result2)
 
         self.practice.submit_event(result2, task)
-        self.memory.record_experience(task, result2)
+        self.memory.record_experience(task, result2, evolution_run_id=run_id)
+
+        # Re-extract skills using both loops of the current evolution run
+        experiences = self.memory.query_experiences(task, evolution_run_id=run_id)
+        candidates = self.how.extract_skills(experiences)
+        for c in candidates:
+            c.source_task_ids.append(task.id)
+            self.skill_registry.add(c)
 
         # Evolution metrics
         l1 = {
@@ -116,8 +123,13 @@ class EvolutionRunner:
         }
         evo_metrics = compute_evolution_metrics(l1, l2)
 
-        # Skill discovery rate from registry
-        evo_metrics["skill_discovery_rate"] = len(self.skill_registry.list_skills()) / max(1, len(loop_results))
+        # Skill discovery metrics from registry
+        validated_skills = self.skill_registry.list_skills()
+        candidate_skills = self.skill_registry.list_candidates()
+        evo_metrics["skill_discovery_rate"] = len(validated_skills) / max(1, len(loop_results))
+        evo_metrics["skill_candidate_rate"] = len(candidate_skills) / max(1, len(loop_results))
+        evo_metrics["skill_validated_count"] = float(len(validated_skills))
+        evo_metrics["skill_candidate_count"] = float(len(candidate_skills))
 
         report = {
             "run_id": run_id,
@@ -125,7 +137,8 @@ class EvolutionRunner:
             "policy_id": policy_config.get("policy_id", "unknown"),
             "loop_results": [r.model_dump(mode="json") for r in loop_results],
             "evolution_metrics": evo_metrics,
-            "discovered_skills": [s.model_dump(mode="json") for s in self.skill_registry.list_skills()],
+            "discovered_skills": [s.model_dump(mode="json") for s in validated_skills],
+            "candidate_skills": [s.model_dump(mode="json") for s in candidate_skills],
             "generated_tasks": generated_tasks,
             "artifacts": {},
         }

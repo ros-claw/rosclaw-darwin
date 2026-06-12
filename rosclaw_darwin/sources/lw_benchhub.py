@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
 from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
 
 from .base import SourceImporter
@@ -76,9 +77,22 @@ class LWBenchHubImporter(SourceImporter):
         env_name = record.get("environment", name)
         embodiment = record.get("embodiment", "unitree_g1")
         objects = record.get("objects", [])
+        description = record.get("description", "")
+        objects = [
+            ObjectSpec(name=o.get("name", f"obj_{i}"), category=o.get("type"))
+            for i, o in enumerate(objects)
+        ]
+        objects = enrich_objects(objects)
+        primitives = infer_primitives(
+            name=name,
+            description=description,
+            success_conditions=record.get("success_conditions", []),
+            objects=objects,
+        )
         return Task(
             id=task_id,
             name=name,
+            description=description,
             source=TaskSource.lw_benchhub,
             domain=record.get("domain", "manipulation"),
             horizon=record.get("horizon", "short"),
@@ -90,7 +104,8 @@ class LWBenchHubImporter(SourceImporter):
                 robot=embodiment,
                 control_mode=record.get("control_mode"),
             ),
-            objects=[ObjectSpec(name=o.get("name", f"obj_{i}"), category=o.get("type")) for i, o in enumerate(objects)],
+            objects=objects,
+            primitives=primitives,
             eval=EvalSpec(
                 max_steps=record.get("max_steps", 1000),
                 max_episodes=record.get("max_episodes", 20),
@@ -110,16 +125,23 @@ class LWBenchHubImporter(SourceImporter):
     def _import_from_py(self, record: dict) -> Task:
         # Fallback: create a minimal task from python registration
         path = record.get("_source_path", "unknown.py")
-        name = Path(path).stem
+        class_name = record.get("class_name", Path(path).stem)
+        name = class_name
+        objects = [ObjectSpec(name="object", affordances=["graspable", "movable"])]
+        objects = enrich_objects(objects)
+        primitives = infer_primitives(name=name, objects=objects)
         return Task(
-            id=f"lw_py_{name}",
+            id=f"lw_{name.lower()}",
             name=name,
             source=TaskSource.lw_benchhub,
             scene=SceneSpec(name="default"),
             embodiment=EmbodimentSpec(robot="unitree_g1"),
+            objects=objects,
+            primitives=primitives,
             provenance=ProvenanceSpec(
                 source=TaskSource.lw_benchhub,
                 source_repo=str(self.repo_path) if self.repo_path else None,
                 source_path=path,
+                native_env_name=class_name,
             ),
         )

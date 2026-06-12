@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Memory - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧠 Memory Experiences</h1><p>Persisted experiences from evaluation and evolution runs.</p></div>
+{% if memories %}
+<div class="card"><table>
+<tr><th>Task</th><th>Run</th><th>Adapter</th><th>Success Rate</th><th>Failures</th><th>Timestamp</th></tr>
+{% for m in memories %}
+<tr>
+  <td>{{ m.task_id }}</td>
+  <td>{{ m.run_id }}</td>
+  <td>{{ m.adapter }}</td>
+  <td class="metric">{{ "%.2f"|format(m.metrics.get("success_rate", 0)) }}</td>
+  <td>{{ m.failure_types.keys()|join(", ") }}</td>
+  <td>{{ m.timestamp }}</td>
+</tr>
+{% endfor %}
+</table></div>
+{% else %}
+<div class="card"><p>No experiences recorded yet.</p></div>
+{% endif %}
+{% endblock %}

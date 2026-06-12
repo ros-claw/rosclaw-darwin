@@ -2,26 +2,37 @@ id: goal_pose_001
 name: Goal Pose
 version: "1.0"
 description: Move the cube to the target pose.
-source: rosclaw-tdl
-scene: table_simple
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
 primitives:
   - name: Orient
-    params: {}
-    target: cube
+    args:
+      target: cube
 objects:
   - name: cube
-    object_type: graspable
-    properties: {material: plastic}
-constraints:
-  - name: no_rotation
-    constraint_type: safety
-    description: Keep orientation stable
-    weight: 1.0
-eval_config:
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
   max_steps: 300
-  timeout_seconds: 45.0
-  success_criteria: [pose_reached]
+  max_episodes: 5
+  success_conditions: [pose_reached]
   metrics: [success_rate, completion_time]
-  repetitions: 5
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
 tags: [table, atomic, pose]
-difficulty: 1.0
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: cube_goal_pose
+    object: dex_cube
+    embodiment: franka_ik

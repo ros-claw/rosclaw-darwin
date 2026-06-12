@@ -51,15 +51,21 @@ def doctor() -> None:
         table.add_row("rosclaw-darwin", "FAIL", str(e))
 
     # External repos
-    for name, env_var in [
-        ("IsaacLab-Arena", "ARENA_REPO"),
-        ("LW-BenchHub", "LW_BENCHHUB_REPO"),
-        ("RoboTwin", "ROBOTWIN_REPO"),
-        ("BEHAVIOR-1K", "BEHAVIOR1K_REPO"),
+    for name, env_vars in [
+        ("IsaacLab-Arena", ["ROSCLAW_ARENA_REPO", "ARENA_REPO"]),
+        ("LW-BenchHub", ["ROSCLAW_LW_BENCHHUB_REPO", "LW_BENCHHUB_REPO"]),
+        ("RoboTwin", ["ROSCLAW_ROBOTWIN_REPO", "ROBOTWIN_REPO"]),
+        ("BEHAVIOR-1K", ["ROSCLAW_BEHAVIOR1K_REPO", "BEHAVIOR1K_REPO"]),
     ]:
-        path = os.getenv(env_var)
+        path = None
+        used_var = env_vars[0]
+        for env_var in env_vars:
+            path = os.getenv(env_var)
+            if path:
+                used_var = env_var
+                break
         status = "OK" if path and Path(path).exists() else "NOT FOUND"
-        table.add_row(name, status, path or f"Set {env_var}")
+        table.add_row(name, status, path or f"Set {used_var}")
 
     # CUDA
     try:
@@ -204,7 +210,7 @@ def run(
             env = ArenaAdapter(t)
         except ImportError as e:
             console.print(f"[red]Arena adapter not available: {e}[/red]")
-            console.print("[yellow]Tip: Set ARENA_REPO and install IsaacLab-Arena dependencies[/yellow]")
+            console.print("[yellow]Tip: Set ROSCLAW_ARENA_REPO=/path/to/IsaacLab-Arena and install IsaacLab-Arena dependencies[/yellow]")
             raise typer.Exit(1)
     else:
         console.print(f"[red]Unknown adapter: {adapter}[/red]")
@@ -269,6 +275,8 @@ def evolve(
         task_yaml=t.to_yaml(),
         policy_config=policy_config,
     )
+
+    runner.memory.finalize(run_dir)
 
     # Summary
     evo = report["evolution_metrics"]

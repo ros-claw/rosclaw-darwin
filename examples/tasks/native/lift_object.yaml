@@ -10,16 +10,15 @@ scene:
   domain: manipulation
 
 embodiment:
-  robot: unitree_g1
-  control_mode: whole_body
+  robot: franka
+  control_mode: ik
 
 objects:
   - name: cube
     affordances: [graspable]
 
 primitives:
-  - name: grasp
-  - name: lift
+  - name: Lift
 
 eval:
   success_conditions:
@@ -41,9 +40,9 @@ mutation:
 
 metadata:
   arena_env_args:
-    environment: cube_goal_pose
-    object: procedural_cube
-    background: procedural_table
+    environment: lift_object
+    object: dex_cube
+    embodiment: franka_ik
 
 tags:
   - mvp

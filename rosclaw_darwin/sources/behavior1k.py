@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
 from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
 
 from .base import SourceImporter
@@ -61,6 +62,7 @@ class Behavior1KImporter(SourceImporter):
         # Extract goal conditions
         success_conditions: list[str] = []
         objects: list[ObjectSpec] = []
+        description = ""
 
         for line in text.splitlines():
             line = line.strip()
@@ -80,15 +82,24 @@ class Behavior1KImporter(SourceImporter):
                             if not any(o.name == obj_name for o in objects):
                                 objects.append(ObjectSpec(name=obj_name))
 
+        objects = enrich_objects(objects)
+        primitives = infer_primitives(
+            name=name,
+            description=description,
+            success_conditions=success_conditions,
+            objects=objects,
+        )
         return Task(
             id=task_id,
             name=name.replace("_", " ").title(),
+            description=description,
             source=TaskSource.behavior1k,
             domain="household",
             horizon="long",
             scene=SceneSpec(name="household", domain="household"),
             embodiment=EmbodimentSpec(robot="unitree_g1"),
             objects=objects,
+            primitives=primitives,
             eval=EvalSpec(success_conditions=success_conditions),
             provenance=ProvenanceSpec(
                 source=TaskSource.behavior1k,
@@ -102,6 +113,15 @@ class Behavior1KImporter(SourceImporter):
         name = record.get("activity_name", record.get("name", "unknown"))
         task_id = f"behavior1k_{name.lower().replace(' ', '_')}"
         objects = record.get("objects", [])
+        objects = [ObjectSpec(name=o.get("name", f"obj_{i}"), category=o.get("type")) for i, o in enumerate(objects)]
+        objects = enrich_objects(objects)
+        success_conditions = record.get("goal_conditions", [])
+        primitives = infer_primitives(
+            name=name,
+            description=record.get("description", ""),
+            success_conditions=success_conditions,
+            objects=objects,
+        )
         return Task(
             id=task_id,
             name=name,
@@ -110,8 +130,9 @@ class Behavior1KImporter(SourceImporter):
             horizon="long",
             scene=SceneSpec(name=record.get("scene", "household"), domain="household"),
             embodiment=EmbodimentSpec(robot="unitree_g1"),
-            objects=[ObjectSpec(name=o.get("name", f"obj_{i}")) for i, o in enumerate(objects)],
-            eval=EvalSpec(success_conditions=record.get("goal_conditions", [])),
+            objects=objects,
+            primitives=primitives,
+            eval=EvalSpec(success_conditions=success_conditions),
             provenance=ProvenanceSpec(
                 source=TaskSource.behavior1k,
                 source_repo=str(self.repo_path) if self.repo_path else None,

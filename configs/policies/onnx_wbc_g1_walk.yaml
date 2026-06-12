@@ -1,0 +1,8 @@
+policy_id: onnx_wbc_g1_walk
+type: onnx_wbc
+policy_config_dict:
+  checkpoint_path: "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab/Arena/wbc_policy/models/homie_v2/walk.onnx"
+  device: "cuda:0"
+  input_name: "input"
+strength: 1.0
+memory_bonus: 0.0

@@ -1,0 +1,7 @@
+policy_id: replay_cube_goal_pose
+type: replay
+policy_config_dict:
+  replay_file_path: "/tmp/isaaclab/logs/replay_demo.hdf5"
+  device: "cuda"
+strength: 1.0
+memory_bonus: 0.0

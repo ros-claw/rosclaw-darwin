@@ -1,0 +1,7 @@
+policy_id: rsl_rl_lift_object
+type: rsl_rl
+policy_config_dict:
+  checkpoint_path: "/workspace/isaaclab_arena/logs/rsl_rl/lift_object_rsl_rl/2026-06-07_14-35-00_run_001/model_999.pt"
+  device: "cuda:0"
+strength: 1.0
+memory_bonus: 0.0

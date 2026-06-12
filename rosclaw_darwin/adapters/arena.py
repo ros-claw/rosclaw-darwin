@@ -65,9 +65,12 @@ class _ArenaComponentMapper:
 
     # Map ROSClaw object names → Arena asset registry names.
     # These names must match the ``name`` attribute of a registered asset.
+    # Only names present in the local Arena asset registry are listed; using
+    # unregistered names causes the example environment to fail during asset
+    # lookup.
     _OBJECT_MAP: dict[str, str] = {
-        # Nucleus-backed assets (requires Omniverse connection).
-        "milk_carton": "milk_carton_hope_robolab",
+        # YCB / HOT3D / local assets that are registered in Arena.
+        "milk_carton": "milk_carton_hot3d_robolab",
         "cracker_box": "cracker_box",
         "mustard_bottle": "mustard_bottle",
         "sugar_box": "sugar_box",
@@ -79,12 +82,9 @@ class _ArenaComponentMapper:
         "bowl": "bowl_ycb_robolab",
         "banana": "banana_ycb_robolab",
         "brick": "brick_ycb_robolab",
-        "spoon": "spoon_handal_robolab",
-        "fork": "salad_tongs_handal_robolab",
-        "knife": "serving_spoon_handal_robolab",
-        "plate": "clay_plates_hot3d_robolab",
-        "cup": "ceramic_mug_hot3d_robolab",
-        "bottle": "beer_bottle_hot3d_robolab",
+        "plate": "wooden_bowl_hot3d_robolab",
+        "cup": "mug",
+        "bottle": "beer_bottle",
         "can": "soup_can_hot3d_robolab",
         "box": "brown_box",
         "cube": "dex_cube",
@@ -94,6 +94,35 @@ class _ArenaComponentMapper:
         # Procedural fallback assets (no Nucleus required).
         "procedural_cube": "procedural_cube",
     }
+
+    # Arena assets that have explicit local USD paths (not Lightwheel cloud).
+    # The Docker runtime patches Lightwheel to a dummy USD, so cloud-backed
+    # assets fail to spawn. Use this set to fall back to local geometry.
+    _LOCAL_ARENA_OBJECTS: frozenset[str] = frozenset({
+        "cracker_box",
+        "mustard_bottle",
+        "sugar_box",
+        "tomato_soup_can",
+        "power_drill",
+        "mug",
+        "dex_cube",
+        "brown_box",
+        "sphere",
+        "blue_sorting_bin",
+        "red_container",
+        "green_container",
+        "red_cube",
+        "green_cube",
+        "banana_ycb_robolab",
+        "bowl_ycb_robolab",
+        "brick_ycb_robolab",
+        "milk_carton_hot3d_robolab",
+        "wooden_bowl_hot3d_robolab",
+        "soup_can_hot3d_robolab",
+        "table_maple_robolab",
+        "procedural_table",
+        "procedural_cube",
+    })
 
     # Map ROSClaw scene names → Arena background asset names.
     # Nucleus-backed assets (require Omniverse connection) are listed first;
@@ -529,7 +558,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         # fall back to the standard IsaacLab panda_instanceable.usd.
         try:
             import isaaclab_arena.embodiments.franka.franka as _franka_mod
-            _local_franka = "/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
+            _local_franka = "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
             if hasattr(_franka_mod, "_FRANKA_IK_REL_CFG"):
                 _franka_mod._FRANKA_IK_REL_CFG.spawn.usd_path = _local_franka
             if hasattr(_franka_mod, "_FRANKA_JOINT_POS_CFG"):
@@ -569,8 +598,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                         "headless": self.headless,
                         "width": 1280,
                         "height": 720,
-                        "--/persistent/isaac/asset_root/default": "/data/omniverse/Assets/Isaac/5.1",
-                        "--/persistent/isaac/asset_root/cloud": "/data/omniverse/Assets/Isaac/5.1",
+                        "--/persistent/isaac/asset_root/default": "/data/omniverse/Assets/Isaac/6.0",
+                        "--/persistent/isaac/asset_root/cloud": "/data/omniverse/Assets/Isaac/6.0",
                     }
                 )
             except ImportError as e:
@@ -589,8 +618,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         # is not available in the local asset tree; symlink it to the
         # standard panda_instanceable.usd so the embodiment loads.
         import os
-        _arena_robot_dir = "/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Arena/assets/robot_library"
-        _local_franka = "/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
+        _arena_robot_dir = "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab/Arena/assets/robot_library"
+        _local_franka = "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
         _arena_franka = os.path.join(_arena_robot_dir, "franka_panda_hand_on_stand.usd")
         if not os.path.exists(_arena_franka) and os.path.exists(_local_franka):
             os.makedirs(_arena_robot_dir, exist_ok=True)
@@ -625,9 +654,9 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         # 1. Fix Nucleus paths to use local assets.
         try:
             import isaaclab.utils.assets as _assets
-            _assets.ISAACLAB_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab"
-            _assets.ISAAC_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/5.1/Isaac"
-            _assets.NVIDIA_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/5.1/NVIDIA"
+            _assets.ISAACLAB_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab"
+            _assets.ISAAC_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/6.0/Isaac"
+            _assets.NVIDIA_NUCLEUS_DIR = "/data/omniverse/Assets/Isaac/6.0/NVIDIA"
         except Exception:
             pass
 
@@ -635,7 +664,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         #    (Arena's custom franka_panda_hand_on_stand.usd is not available locally).
         try:
             import isaaclab_arena.embodiments.franka.franka as _franka_mod
-            _local_franka = "/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
+            _local_franka = "/data/omniverse/Assets/Isaac/6.0/Isaac/IsaacLab/Robots/FrankaEmika/panda_instanceable.usd"
             if hasattr(_franka_mod, "_FRANKA_IK_REL_CFG"):
                 _franka_mod._FRANKA_IK_REL_CFG.spawn.usd_path = _local_franka
             if hasattr(_franka_mod, "_FRANKA_JOINT_POS_CFG"):
@@ -918,24 +947,31 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         # --- real / docker / subprocess mode ---
         from rosclaw_darwin.evaluation.arena_runner import ArenaRunner
 
+        arena_repo = self._get_arena_repo()
+        if arena_repo is None or not Path(arena_repo).exists():
+            return EvaluationResult(
+                run_id=run_id,
+                task_id=self.task.id,
+                policy_id=policy_config.get("policy_id", "unknown"),
+                adapter=self.name,
+                status="environment_missing",
+                metrics={},
+                metadata={"error": "Arena repo not found. Set ROSCLAW_ARENA_REPO=/path/to/IsaacLab-Arena."},
+            )
+
         if self._mode == "docker":
             runner = ArenaRunner(mode="docker")
             # Map ROSClaw task to Arena eval job format
-            raw_obj = self.task.objects[0].name if self.task.objects else "dex_cube"
-            obj_name = _ArenaComponentMapper._OBJECT_MAP.get(raw_obj, raw_obj)
-            # Use the same robot→embodiment mapping that _ArenaComponentMapper uses
-            robot_name = _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot)
-            env_name = "lift_object"
-            if any(p.name.lower() in ("pick", "place") for p in self.task.primitives):
-                env_name = "pick_and_place"
-            elif any(p.name.lower() in ("open",) for p in self.task.primitives):
-                env_name = "open_door"
-            elif any(p.name.lower() in ("close",) for p in self.task.primitives):
-                env_name = "close_door"
-            elif any(p.name.lower() in ("press",) for p in self.task.primitives):
-                env_name = "press_button"
-            elif any(p.name.lower() in ("sort",) for p in self.task.primitives):
-                env_name = "sorting"
+            env_args = self._map_primitives_to_arena_env(self.task)
+            env_name = env_args["environment"]
+            arena_env_args = {
+                "environment": env_name,
+                "num_envs": 1,
+            }
+            # Pass extra env-specific args (object, destinations, etc.)
+            for key, value in env_args.items():
+                if key != "environment" and value is not None:
+                    arena_env_args[key] = value
 
             # Episode-based evaluation when episodes is specified;
             # otherwise fall back to step-based for quick smoke tests.
@@ -950,16 +986,20 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "heuristic_policy.HeuristicLiftPolicy"
             if policy_type == "cube_goal_pose_heuristic":
                 policy_type = "heuristic_policy.CubeGoalPoseHeuristicPolicy"
+            if policy_type == "cheat_cube_goal_pose":
+                policy_type = "heuristic_policy.CheatCubeGoalPosePolicy"
+            if policy_type == "replay_action":
+                policy_type = "isaaclab_arena.policy.replay_action_policy.ReplayActionPolicy"
+            if policy_type == "torchscript":
+                policy_type = "isaaclab_arena.policy.torchscript_action_policy.TorchScriptActionPolicy"
+            if policy_type == "onnx_wbc":
+                policy_type = "isaaclab_arena.policy.onnx_wbc_action_policy.OnnxWbcActionPolicy"
             # For heuristic policies use step-based rollout so we can observe
             # behaviour across multiple steps even if episodes end early.
             if policy_type == "heuristic_policy.HeuristicLiftPolicy":
                 job = {
                     "name": self.task.id,
-                    "arena_env_args": {
-                        "environment": env_name,
-                        "object": obj_name,
-                        "embodiment": robot_name,
-                    },
+                    "arena_env_args": arena_env_args,
                     "num_steps": 200,
                     "policy_type": policy_type,
                     "policy_config_dict": policy_config.get("policy_config_dict", {}),
@@ -969,11 +1009,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             elif eps and eps > 0:
                 job = {
                     "name": self.task.id,
-                    "arena_env_args": {
-                        "environment": env_name,
-                        "object": obj_name,
-                        "embodiment": robot_name,
-                    },
+                    "arena_env_args": arena_env_args,
                     "num_episodes": eps,
                     "policy_type": policy_type,
                     "policy_config_dict": policy_config.get("policy_config_dict", {}),
@@ -983,11 +1019,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             else:
                 job = {
                     "name": self.task.id,
-                    "arena_env_args": {
-                        "environment": env_name,
-                        "object": obj_name,
-                        "embodiment": robot_name,
-                    },
+                    "arena_env_args": arena_env_args,
                     "num_steps": self.task.eval.max_steps or 50,
                     "policy_type": policy_type,
                     "policy_config_dict": policy_config.get("policy_config_dict", {}),
@@ -1004,6 +1036,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
                 native_config = self.task.provenance.native_config or {}
             job.update(native_config)
+
+            job["_out_dir"] = "/tmp/rosclaw_data/runs"
 
             if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
                 return EvaluationResult(
@@ -1088,6 +1122,62 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         )
         return result
 
+
+    def _map_primitives_to_arena_env(self, task: Task) -> dict[str, Any]:
+        """Map ROSClaw primitives to a valid IsaacLab-Arena example environment."""
+        primitive_names = {p.name for p in task.primitives}
+        # Pick a representative object name and map it to Arena asset registry.
+        raw_obj = task.objects[0].name if task.objects else "object"
+        mapped_obj = _ArenaComponentMapper._OBJECT_MAP.get(raw_obj, raw_obj)
+        if mapped_obj == "object" or mapped_obj not in _ArenaComponentMapper._LOCAL_ARENA_OBJECTS:
+            mapped_obj = "dex_cube"
+
+        # Defaults if no specific environment is matched.
+        env_args: dict[str, Any] = {
+            "environment": "lift_object",
+            "object": mapped_obj,
+            "embodiment": _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot),
+        }
+
+        if "Sort" in primitive_names:
+            return {
+                "environment": "tabletop_sort_cubes",
+                "objects": ["red_cube", "green_cube"],
+                "destinations": ["red_container", "green_container"],
+                "background": "table",
+                "embodiment": "franka_ik",
+            }
+
+        if "Press" in primitive_names:
+            return {
+                "environment": "press_button",
+                "object": "coffee_machine",
+                "embodiment": "franka_ik",
+            }
+
+        if primitive_names & {"Open", "Close"}:
+            return {
+                "environment": "lift_object",
+                "object": mapped_obj if mapped_obj != "object" else "dex_cube",
+                "embodiment": "franka_joint_pos",
+            }
+
+        if "Pick" in primitive_names or "Place" in primitive_names:
+            return {
+                "environment": "lift_object",
+                "object": mapped_obj if mapped_obj != "object" else "dex_cube",
+                "embodiment": "franka_joint_pos",
+            }
+
+        if "Lift" in primitive_names:
+            return {
+                "environment": "lift_object",
+                "object": mapped_obj if mapped_obj != "object" else "dex_cube",
+                "embodiment": "franka_joint_pos",
+            }
+
+        return env_args
+
     def get_state(self) -> dict[str, Any]:
         return {
             **super().get_state(),
@@ -1098,7 +1188,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
 
     def _get_arena_repo(self) -> str | None:
         import os
-        return os.environ.get("ARENA_REPO")
+        return os.environ.get("ROSCLAW_ARENA_REPO") or os.environ.get("ARENA_REPO")
 
     @classmethod
     def create_in_container(

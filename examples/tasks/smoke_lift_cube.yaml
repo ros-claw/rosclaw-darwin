@@ -1,0 +1,56 @@
+id: darwin_smoke_lift_cube_v001
+name: Smoke test lift cube
+description: Lift a procedural cube for Arena subprocess smoke test.
+source: native
+domain: manipulation
+horizon: short
+
+scene:
+  name: table
+  domain: manipulation
+  layout: fixed
+
+embodiment:
+  robot: franka
+  control_mode: whole_body
+  enable_cameras: false
+
+objects:
+  - name: cube
+    category: object
+    affordances: [graspable, movable]
+
+primitives:
+  - name: Lift
+    args:
+      target: cube
+    postconditions:
+      - lifted(cube)
+
+constraints:
+  - collision_free
+  - cube_not_dropped
+
+eval:
+  success_conditions:
+    - lifted(cube)
+  failure_conditions:
+    - cube_dropped
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+    - collision_count
+  max_steps: 200
+  max_episodes: 1
+
+mutation:
+  allowed:
+    - object_position
+    - difficulty
+  difficulty: 1
+
+tags:
+  - smoke_test
+  - manipulation
+  - lift

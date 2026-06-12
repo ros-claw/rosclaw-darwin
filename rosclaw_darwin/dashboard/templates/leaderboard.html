@@ -12,7 +12,7 @@
       <td>{{ entry.task_id }}</td>
       <td class="metric">{{ "%.4f"|format(entry.evolution_score) }}</td>
       <td class="metric">{{ "%.4f"|format(entry.delta_success_rate) }}</td>
-      <td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency) }}</td>
+      <td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency_score) }}</td>
       <td class="metric">{{ "%.2f"|format(entry.success_rate * 100) }}%</td>
     </tr>
     {% endfor %}

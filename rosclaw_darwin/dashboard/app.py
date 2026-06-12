@@ -29,7 +29,9 @@ class DashboardApp:
                 "evolution_runs": self._load_evolution_runs(),
                 "tasks": self._load_tasks(),
                 "skills": self._load_skills(),
+                "candidates": self._load_candidates(),
                 "leaderboard": self._load_leaderboard(),
+                "memories": self._load_memory(),
             })
 
         @self.app.get("/runs", response_class=HTMLResponse)
@@ -60,6 +62,7 @@ class DashboardApp:
         async def skills_page(request: Request) -> Any:
             return self.templates.TemplateResponse(request, "skills.html", {
                 "skills": self._load_skills(),
+                "candidates": self._load_candidates(),
             })
 
         @self.app.get("/failures", response_class=HTMLResponse)
@@ -74,6 +77,16 @@ class DashboardApp:
             return self.templates.TemplateResponse(request, "leaderboard.html", {
                 "leaderboard": entries,
             })
+
+        @self.app.get("/memory", response_class=HTMLResponse)
+        async def memory_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "memory.html", {
+                "memories": self._load_memory(),
+            })
+
+        @self.app.get("/api/memory")
+        async def api_memory() -> JSONResponse:
+            return JSONResponse(content={"memories": self._load_memory()})
 
         # JSON API endpoints
         @self.app.get("/api/leaderboard")
@@ -122,13 +135,71 @@ class DashboardApp:
         return {"nodes": nodes, "edges": edges}
 
     def _load_skills(self) -> list[dict]:
+        skills: list[dict] = []
+        # 1. Load persisted registry
         path = self.data_dir / "skills" / "registry.json"
         if path.exists():
             try:
-                return json.loads(path.read_text()).get("skills", [])
+                skills = json.loads(path.read_text()).get("skills", [])
             except Exception:
                 pass
-        return []
+        # 2. Aggregate discovered skills from evolution runs
+        for evo in self._load_evolution_runs():
+            for s in evo.get("discovered_skills", []):
+                if s.get("fingerprint") not in {x.get("fingerprint") for x in skills}:
+                    skills.append(s)
+        return skills
+
+    def _load_candidates(self) -> list[dict]:
+        """Load skill candidates that have not yet been validated."""
+        validated_fps = {s.get("fingerprint") for s in self._load_skills()}
+        candidates: list[dict] = []
+        for evo in self._load_evolution_runs():
+            for s in evo.get("candidate_skills", []):
+                fp = s.get("fingerprint")
+                if fp not in validated_fps and fp not in {x.get("fingerprint") for x in candidates}:
+                    candidates.append(s)
+        return candidates
+
+    def _load_memory(self) -> list[dict]:
+        """Load persisted experiences from the global memory store and per-run dirs."""
+        records: list[dict] = []
+        seen: set[str] = set()
+
+        # Global store (relative to data_dir)
+        global_path = self.data_dir / "memory" / "experiences.jsonl"
+        if global_path.exists():
+            for line in global_path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = __import__("json").loads(line)
+                    key = rec.get("run_id", "") + "|" + rec.get("timestamp", "")
+                    if key not in seen:
+                        records.append(rec)
+                        seen.add(key)
+                except Exception:
+                    continue
+
+        # Per-run memory
+        for evo in self._load_evolution_runs():
+            run_id = evo.get("run_id")
+            if not run_id:
+                continue
+            run_mem = self.data_dir / "evolution_runs" / run_id / "memory" / "experiences.jsonl"
+            if run_mem.exists():
+                for line in run_mem.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        rec = __import__("json").loads(line)
+                        key = rec.get("run_id", "") + "|" + rec.get("timestamp", "")
+                        if key not in seen:
+                            records.append(rec)
+                            seen.add(key)
+                    except Exception:
+                        continue
+        return records
 
     def _load_failures(self) -> dict[str, int]:
         failures: dict[str, int] = {}
@@ -154,7 +225,7 @@ class DashboardApp:
         entries.sort(key=lambda x: (
             x.get("evolution_score", 0),
             x.get("delta_success_rate", 0),
-            x.get("memory_integration_efficiency", 0),
+            x.get("memory_integration_efficiency_score", 0),
             x.get("success_rate", 0),
         ), reverse=True)
         return entries

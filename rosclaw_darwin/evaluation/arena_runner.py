@@ -156,13 +156,18 @@ class ArenaRunner:
             cmd = [
                 "docker", "run", "--rm", "--gpus", "all",
                 "-e", "ACCEPT_EULA=Y",
+                "-e", "DISPLAY=",
                 "--entrypoint", "",
                 # Mount eval config
                 "-v", f"{config_path}:/workspace/data/eval_jobs.json",
                 # Mount metrics output file
                 "-v", f"{metrics_path}:/workspace/data/metrics_output.json",
                 # Mount asset root (host local assets -> container)
+                "-v", "/data/omniverse/Assets/Isaac/6.0:/data/omniverse/Assets/Isaac/6.0",
                 "-v", "/data/omniverse/Assets/Isaac/5.1:/data/omniverse/Assets/Isaac/5.1",
+                # Overlay the missing Arena assets from 6.0 onto the 5.1 tree
+                # without modifying the shared host directory.
+                "-v", "/tmp/rosclaw_arena_51_overlay/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Arena:/data/omniverse/Assets/Isaac/5.1/Isaac/IsaacLab/Arena",
                 # Mount kit patches (local asset root instead of HTTPS)
                 "-v", f"{DEPS_DIR / 'isaaclab.python.kit'}:/workspace/submodules/IsaacLab/apps/isaaclab.python.kit",
                 "-v", f"{DEPS_DIR / 'isaaclab.python.headless.kit'}:/workspace/submodules/IsaacLab/apps/isaaclab.python.headless.kit",
@@ -174,6 +179,9 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'kuka_allegro.py'}:/workspace/isaaclab_arena/embodiments/kuka_allegro/kuka_allegro.py",
                 "-v", f"{DEPS_DIR / 'isaaclab_arena_manager_based_env.py'}:/workspace/isaaclab_arena/environments/isaaclab_arena_manager_based_env.py",
                 "-v", f"{DEPS_DIR / 'visual_materials.py'}:/workspace/submodules/IsaacLab/source/isaaclab/isaaclab/sim/spawners/materials/visual_materials.py",
+                # Mount permissive object_reference patch (allows non-Z-axis
+                # parent rotations in kitchen_pick_and_place etc.).
+                "-v", f"{DEPS_DIR / 'object_reference.py'}:/workspace/isaaclab_arena/assets/object_reference.py",
                 # Mount bootstrap
                 "-v", f"{DEPS_DIR / 'run_eval.py'}:/workspace/data/run_eval.py",
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
@@ -181,6 +189,18 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'heuristic_policy.py'}:/workspace/data/heuristic_policy.py",
                 # Mount patched lift environment (uses procedural_table instead of table)
                 "-v", f"{DEPS_DIR / 'lift_object_environment.py'}:/workspace/isaaclab_arena_environments/lift_object_environment.py",
+                # Mount patched replay policy (fixes None-check ordering bug)
+                "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/policy/replay_action_policy.py:/workspace/isaaclab_arena/policy/replay_action_policy.py",
+                # Mount TorchScript policy wrapper
+                "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/policy/torchscript_action_policy.py:/workspace/isaaclab_arena/policy/torchscript_action_policy.py",
+                # Mount ONNX policy wrapper
+                "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/policy/onnx_action_policy.py:/workspace/isaaclab_arena/policy/onnx_action_policy.py",
+                # Mount HDF5 recording directory (persist dataset recordings across container restarts)
+                "-v", "/tmp/rosclaw_data/hdf5:/tmp/isaaclab/logs",
+                # Mount test_data with official pretrained models (lift_object_model.pt)
+                "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/tests/test_data:/workspace/isaaclab_arena/tests/test_data",
+                # Mount training logs/checkpoints so RSL-RL policies can load trained models
+                "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/logs:/workspace/isaaclab_arena/logs",
                 "-w", "/workspace",
                 self.docker_image,
                 "/isaac-sim/python.sh", "/workspace/data/run_eval.py",
@@ -189,6 +209,9 @@ class ArenaRunner:
 
             logger.info(f"Running Arena (docker): {' '.join(cmd[:12])} ...")
 
+            # Save full stderr for debugging heuristic policies
+            _stderr_path = tmp_path / "arena_stderr.log"
+
             try:
                 proc = subprocess.run(
                     cmd,
@@ -196,9 +219,13 @@ class ArenaRunner:
                     text=True,
                     timeout=job.get("timeout_seconds", 1200),
                 )
+                _stderr_text = proc.stderr if isinstance(proc.stderr, str) else (proc.stderr.decode("utf-8", errors="replace") if proc.stderr else "")
+                _stderr_path.write_text(_stderr_text)
             except subprocess.TimeoutExpired as exc:
+                _stderr_text = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr.decode("utf-8", errors="replace") if exc.stderr else "")
+                _stderr_path.write_text(_stderr_text)
                 return self._make_error_result(
-                    run_id, task_id, policy_id, cmd, exc.stdout or "", exc.stderr or "", -1, started_at
+                    run_id, task_id, policy_id, cmd, exc.stdout or "", _stderr_text, -1, started_at
                 )
             except FileNotFoundError as exc:
                 return self._make_error_result(
@@ -229,6 +256,22 @@ class ArenaRunner:
                 else:
                     status = "completed"
 
+            # Collect full stderr (up to 50KB) into metadata for debugging
+            stderr_full = proc.stderr or ""
+            if _stderr_path.exists():
+                try:
+                    stderr_full = _stderr_path.read_text()
+                except Exception:
+                    pass
+            # TemporaryDirectory will delete tmpdir on exit; copy stderr to persistent location if out_dir available
+            _persist_stderr = None
+            if job.get("_out_dir"):
+                _persist_stderr = Path(job["_out_dir"]) / f"{run_id}_stderr.log"
+                try:
+                    _persist_stderr.write_text(stderr_full)
+                except Exception:
+                    _persist_stderr = None
+
             return EvaluationResult(
                 run_id=run_id,
                 task_id=task_id,
@@ -238,7 +281,7 @@ class ArenaRunner:
                 metrics=metrics,
                 command=cmd,
                 stdout_path=None,
-                stderr_path=None,
+                stderr_path=str(_persist_stderr) if _persist_stderr else None,
                 started_at=started_at,
                 finished_at=finished_at,
                 metadata={
@@ -246,6 +289,7 @@ class ArenaRunner:
                     "return_code": proc.returncode,
                     "stdout_preview": proc.stdout[:2000],
                     "stderr_preview": proc.stderr[:2000],
+                    "stderr_full": stderr_full[:50000],
                 },
             )
 
