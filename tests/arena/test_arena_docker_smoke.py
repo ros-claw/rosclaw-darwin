@@ -62,3 +62,24 @@ def test_arena_skill_hint_consumption(lift_task: Task, request) -> None:
     assert result.status == "completed"
     # Hint consumption is logged to stderr inside the container; here we only verify the pipeline runs.
     assert result.stderr_path is not None or result.stdout_path is not None
+
+
+def test_arena_servo_policy_smoke(lift_task: Task, request) -> None:
+    if not _should_run(request):
+        pytest.skip("Pass --run-arena or set RUN_ARENA_TESTS=1 to run Arena Docker tests")
+    adapter = ArenaAdapter(lift_task, mode="docker")
+    result = adapter.run_policy(
+        {
+            "type": "heuristic_servo_lift",
+            "policy_id": "heuristic_servo_lift",
+            "policy_config_dict": {
+                "approach_offset_z": 0.08,
+                "grasp_offset_z": 0.02,
+                "lift_height": 0.25,
+                "kp": 5.0,
+            },
+        },
+        episodes=1,
+    )
+    assert result.status == "completed"
+    assert "success_rate" in result.metrics

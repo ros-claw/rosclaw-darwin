@@ -988,6 +988,10 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             # /workspace/data is on sys.path inside the container.
             if policy_type == "heuristic_lift":
                 policy_type = "heuristic_policy.HeuristicLiftPolicy"
+            if policy_type == "heuristic_servo_lift":
+                policy_type = "heuristic_policy.HeuristicServoLiftPolicy"
+            if policy_type == "cheat_lift":
+                policy_type = "heuristic_policy.CheatLiftPolicy"
             if policy_type == "cube_goal_pose_heuristic":
                 policy_type = "heuristic_policy.CubeGoalPoseHeuristicPolicy"
             if policy_type == "cheat_cube_goal_pose":
@@ -998,16 +1002,22 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "isaaclab_arena.policy.torchscript_action_policy.TorchScriptActionPolicy"
             if policy_type == "onnx_wbc":
                 policy_type = "isaaclab_arena.policy.onnx_wbc_action_policy.OnnxWbcActionPolicy"
+            if policy_type == "rsl_rl":
+                policy_type = "isaaclab_arena.policy.rsl_rl_action_policy.RslRlActionPolicy"
             # Forward skill hints into the policy's config dict so Arena-side
             # heuristic policies can consume them. Only pass the key to policies
             # that declare a config_class accepting it; builtin policies like
             # zero_action do not tolerate unknown kwargs.
             policy_config_dict = dict(policy_config.get("policy_config_dict", {}))
             if policy_type.startswith("heuristic_policy."):
-                policy_config_dict["skill_hints"] = policy_config.get("skill_hints", [])
-            # For heuristic policies use step-based rollout so we can observe
-            # behaviour across multiple steps even if episodes end early.
-            if policy_type == "heuristic_policy.HeuristicLiftPolicy":
+                # Preserve hints already inside policy_config_dict; allow top-level override.
+                existing_hints = list(policy_config_dict.get("skill_hints", []))
+                top_hints = policy_config.get("skill_hints", [])
+                policy_config_dict["skill_hints"] = top_hints if top_hints else existing_hints
+            # For heuristic policies use step-based rollout when no episode count
+            # is given so we can observe behaviour across multiple steps even if
+            # episodes end early. If episodes are explicitly requested, honour it.
+            if policy_type.startswith("heuristic_policy.") and not (eps and eps > 0):
                 job = {
                     "name": self.task.id,
                     "arena_env_args": arena_env_args,

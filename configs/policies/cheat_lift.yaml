@@ -1,0 +1,5 @@
+policy_id: cheat_lift
+type: cheat_lift
+strength: 1.0
+memory_bonus: 0.0
+policy_config_dict: {}

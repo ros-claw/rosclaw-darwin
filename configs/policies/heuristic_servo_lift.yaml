@@ -1,0 +1,14 @@
+policy_id: heuristic_servo_lift
+type: heuristic_servo_lift
+strength: 0.7
+memory_bonus: 0.0
+policy_config_dict:
+  approach_offset_z: 0.08
+  grasp_offset_z: 0.02
+  lift_height: 0.25
+  kp: 5.0
+  grasp_dist_threshold: 0.03
+  gripper_close_threshold: 0.015
+  min_grasp_steps: 5
+  approach_horizontal_threshold: 0.05
+  max_state_steps: 300
