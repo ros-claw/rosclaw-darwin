@@ -3,3 +3,15 @@ type: cheat_lift
 strength: 1.0
 memory_bonus: 0.0
 policy_config_dict: {}
+
+is_oracle: true
+is_cheat: true
+excluded_from_leaderboard: true
+can_claim_capability: false
+can_discover_skill: false
+can_compute_evolution_score: false
+
+description: >
+  Teleports the object to the command target. This policy is only for pipeline
+  sanity checking. It must not be used for capability claims, skill discovery,
+  evolution score, or leaderboard ranking.

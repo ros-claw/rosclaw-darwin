@@ -29,7 +29,8 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from rosclaw_darwin.evaluation.result import EvaluationResult
+from rosclaw_darwin.evaluation.policy_metadata import load_policy_metadata
+from rosclaw_darwin.evaluation.result import ClaimLevel, EvaluationResult, MetricScope
 from rosclaw_darwin.tdl.schema import Task
 
 from .base import BaseEnvironmentAdapter
@@ -859,6 +860,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         self,
         policy_config: dict,
         episodes: int | None = None,
+        max_steps: int | None = None,
     ) -> EvaluationResult:
         """Run a policy for multiple episodes via Arena."""
         import time
@@ -965,6 +967,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
 
         if self._mode == "docker":
             runner = ArenaRunner(mode="docker")
+            policy_metadata = load_policy_metadata(policy_config)
             # Map ROSClaw task to Arena eval job format
             env_args = self._map_primitives_to_arena_env(self.task)
             env_name = env_args["environment"]
@@ -996,6 +999,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "heuristic_policy.CubeGoalPoseHeuristicPolicy"
             if policy_type == "cheat_cube_goal_pose":
                 policy_type = "heuristic_policy.CheatCubeGoalPosePolicy"
+            if policy_type == "action_calibration":
+                policy_type = "heuristic_policy.ActionCalibrationPolicy"
             if policy_type == "replay_action":
                 policy_type = "isaaclab_arena.policy.replay_action_policy.ReplayActionPolicy"
             if policy_type == "torchscript":
@@ -1058,6 +1063,14 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 native_config = self.task.provenance.native_config or {}
             job.update(native_config)
 
+            job["_policy_metadata"] = policy_metadata.model_dump(mode="json")
+
+            # Diagnostic overrides: force a fixed-step rollout regardless of the
+            # policy's episode preference. Used by horizon-sweep scripts.
+            if max_steps is not None and max_steps > 0:
+                job = {k: v for k, v in job.items() if k != "num_episodes"}
+                job["num_steps"] = max_steps
+
             job["_out_dir"] = "/tmp/rosclaw_data/runs"
 
             if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
@@ -1088,7 +1101,25 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                             normalized["num_episodes"] = float(v)
                         if "num_steps" in k:
                             normalized["num_steps"] = float(v)
+                        if "progress" in k:
+                            normalized["progress"] = float(v)
                 result.metrics.update(normalized)
+
+            # Apply policy-metadata semantics (oracle/cheat exclusion, claim level).
+            policy_metadata.apply_exclusion(result)
+            if not result.leaderboard_excluded:
+                result.metric_scope = MetricScope.arena_real
+                result.claim_level = ClaimLevel.capability
+            result.metadata["policy_metadata"] = policy_metadata.model_dump(mode="json")
+
+            # Aggregate progress metrics from per-episode traces into top-level metrics.
+            episode_metrics = result.metadata.get("episode_metrics")
+            if episode_metrics and isinstance(episode_metrics, list):
+                result.failure_types = result.metadata.get("failure_counts") or {}
+                for key in ("progress_mean", "eef_to_object_distance_min_mean", "object_height_delta_mean", "object_height_max_mean"):
+                    if key in result.metadata.get("arena_metrics_output", {}):
+                        result.metrics[key] = float(result.metadata["arena_metrics_output"][key])
+
             # Synthetic metrics fallback for step-based runs without structured output.
             if result.status == "completed" and not result.metrics:
                 result.metrics = {

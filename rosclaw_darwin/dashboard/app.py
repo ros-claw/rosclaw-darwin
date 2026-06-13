@@ -248,8 +248,11 @@ class DashboardApp:
     def _load_leaderboard(self) -> list[dict]:
         entries: list[dict] = []
         for evo in self._load_evolution_runs():
-            metrics = evo.get("evolution_metrics", {})
             loops = evo.get("loop_results", [])
+            # Skip evolution runs whose final loop is excluded from leaderboard.
+            if loops and loops[-1].get("leaderboard_excluded"):
+                continue
+            metrics = evo.get("evolution_metrics", {})
             success_rate = loops[-1].get("metrics", {}).get("success_rate", 0) if loops else 0
             entries.append({
                 "task_id": evo.get("task_id"),
@@ -261,6 +264,8 @@ class DashboardApp:
                 "skill_transfer_gain": metrics.get("skill_transfer_gain", 0),
                 "skill_candidate_count": metrics.get("skill_candidate_count", 0),
                 "skill_validated_count": metrics.get("skill_validated_count", 0),
+                "metric_scope": loops[-1].get("metric_scope") if loops else None,
+                "claim_level": loops[-1].get("claim_level") if loops else None,
             })
         entries.sort(key=lambda x: (
             x.get("evolution_score", 0),

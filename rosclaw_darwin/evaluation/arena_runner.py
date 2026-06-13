@@ -237,17 +237,20 @@ class ArenaRunner:
                 )
 
             finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            metrics = self._parse_stdout(proc.stdout)
+            metrics_output = self._parse_metrics_output(proc.stdout)
 
             # Fallback: read metrics from shared file if stdout parsing failed
             # (IsaacSim may call os._exit() which skips Python finally blocks).
-            if not metrics and metrics_path.exists():
+            if not metrics_output and metrics_path.exists():
                 try:
                     file_data = json.loads(metrics_path.read_text())
                     if isinstance(file_data, dict):
-                        metrics = {k: float(v) if isinstance(v, (int, float, bool)) else v for k, v in file_data.items() if isinstance(v, (int, float, bool, str))}
+                        metrics_output = file_data
                 except (json.JSONDecodeError, ValueError):
                     pass
+
+            metrics = self._extract_scalar_metrics(metrics_output)
+            arena_metadata = dict(metrics_output) if metrics_output else {}
 
             # Determine status
             status = "failed"
@@ -276,6 +279,19 @@ class ArenaRunner:
                 except Exception:
                     _persist_stderr = None
 
+            result_metadata = {
+                "mode": "docker",
+                "return_code": proc.returncode,
+                "stdout_preview": proc.stdout[:2000],
+                "stderr_preview": proc.stderr[:2000],
+                "stderr_full": stderr_full[:50000],
+                "arena_metrics_output": arena_metadata,
+            }
+            # Attach progress / episode metadata if provided by the container.
+            for key in ("episode_metrics", "failure_counts", "policy_metadata"):
+                if key in arena_metadata:
+                    result_metadata[key] = arena_metadata[key]
+
             return EvaluationResult(
                 run_id=run_id,
                 task_id=task_id,
@@ -288,13 +304,7 @@ class ArenaRunner:
                 stderr_path=str(_persist_stderr) if _persist_stderr else None,
                 started_at=started_at,
                 finished_at=finished_at,
-                metadata={
-                    "mode": "docker",
-                    "return_code": proc.returncode,
-                    "stdout_preview": proc.stdout[:2000],
-                    "stderr_preview": proc.stderr[:2000],
-                    "stderr_full": stderr_full[:50000],
-                },
+                metadata=result_metadata,
             )
 
     def _build_command(self, job: dict[str, Any]) -> list[str]:
@@ -351,6 +361,50 @@ class ArenaRunner:
                                 metrics[k] = float(v)
                 except json.JSONDecodeError:
                     continue
+        return metrics
+
+    @staticmethod
+    def _parse_metrics_output(stdout: str) -> dict[str, Any]:
+        """Return the full metrics dictionary emitted by the container.
+
+        Unlike ``_parse_stdout`` this preserves nested structures such as
+        ``episode_metrics`` and ``policy_metadata``.
+        """
+        marker = "<<<ROSCLAW_ARENA_METRICS>>>"
+        if marker in stdout:
+            parts = stdout.split(marker)
+            if len(parts) >= 3:
+                try:
+                    data = json.loads(parts[1].strip())
+                    if isinstance(data, dict):
+                        return data
+                except json.JSONDecodeError:
+                    pass
+
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        return data
+                except json.JSONDecodeError:
+                    continue
+        return {}
+
+    @staticmethod
+    def _extract_scalar_metrics(output: dict[str, Any]) -> dict[str, float]:
+        """Flatten a metrics output dict into scalar metrics for ``EvaluationResult``."""
+        metrics: dict[str, float] = {}
+        if not isinstance(output, dict):
+            return metrics
+        for k, v in output.items():
+            if isinstance(v, (int, float, bool)):
+                metrics[k] = float(v)
+            elif isinstance(v, dict):
+                for sk, sv in v.items():
+                    if isinstance(sv, (int, float, bool)):
+                        metrics[f"{k}_{sk}"] = float(sv)
         return metrics
 
     def _make_error_result(

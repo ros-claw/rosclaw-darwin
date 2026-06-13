@@ -3,6 +3,8 @@
 # Called dynamically by eval_runner via policy_type module path.
 
 import argparse
+import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +26,23 @@ except Exception:  # pragma: no cover - host side does not have IsaacLab-Arena i
 
         def __init__(self, config):
             self.config = config
+
+
+_TRACE_PATH = "/workspace/data/episode_trace.jsonl"
+
+
+def _append_trace(step: dict[str, Any]) -> None:
+    """Append a scalar step record to the shared trace file.
+
+    The trace is read by ``run_eval.py`` to compute per-episode progress metrics.
+    """
+    try:
+        with open(_TRACE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(step) + "\n")
+    except Exception as e:
+        import sys
+        print(f"[TRACE_WRITE_ERROR] {e}", file=sys.stderr)
+        pass
 
 
 @dataclass
@@ -159,6 +178,14 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._skill_hints = set(config.skill_hints or [])
         self._relative_mode: bool | None = None
         self._action_scale: float = 1.0
+        self._episode_idx = 0
+
+        # Clear any trace from a previous job in the same container.
+        try:
+            if os.path.exists(_TRACE_PATH):
+                os.remove(_TRACE_PATH)
+        except Exception:
+            pass
 
         self._approach_offset_z = config.approach_offset_z
         self._grasp_offset_z = config.grasp_offset_z
@@ -190,14 +217,6 @@ class HeuristicServoLiftPolicy(PolicyBase):
         step = self._step
         self._step += 1
         self._state_step += 1
-
-        if step == 0 and self._skill_hints:
-            self._log_hints()
-
-        if self._relative_mode is None:
-            self._infer_controller_mode(env)
-
-        eef_pos, eef_quat, object_pos, gripper_pos, target_pos = self._extract_state(observation, env, device)
 
         if step == 0 and self._skill_hints:
             self._log_hints()
@@ -257,6 +276,25 @@ class HeuristicServoLiftPolicy(PolicyBase):
 
         if self._state_step > self._max_state_steps:
             self._transition("HOLD")
+
+        # Record a scalar trace step for progress-metric computation.
+        if object_pos is not None:
+            _append_trace({
+                "episode": self._episode_idx,
+                "step": step,
+                "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
+                "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "object_x": float(object_pos[0].item()),
+                "object_y": float(object_pos[1].item()),
+                "object_z": float(object_pos[2].item()),
+                "target_x": float(target_pos[0].item()) if target_pos is not None else None,
+                "target_y": float(target_pos[1].item()) if target_pos is not None else None,
+                "target_z": float(target_pos[2].item()) if target_pos is not None else None,
+                "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
+                "action_norm": float(torch.linalg.norm(action).item()),
+                "phase": self._state,
+            })
 
         return action
 
@@ -486,6 +524,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._step = 0
         self._state = "APPROACH"
         self._state_step = 0
+        self._episode_idx += 1
 
     @staticmethod
     def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -764,3 +803,98 @@ class CheatCubeGoalPosePolicy(PolicyBase):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "CheatCubeGoalPosePolicy":
         return CheatCubeGoalPosePolicy(HeuristicLiftPolicyArgs.from_cli_args(args))
+
+
+@dataclass
+class ActionCalibrationPolicyArgs:
+    """Configuration for the action-response calibration policy."""
+
+    skill_hints: list[str] | None = None
+    calibration_axis: int = 0  # 0=x, 1=y, 2=z
+    calibration_sign: float = 1.0
+    calibration_magnitude: float = 0.5
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "ActionCalibrationPolicyArgs":
+        return cls(
+            skill_hints=getattr(args, "skill_hints", None),
+            calibration_axis=getattr(args, "calibration_axis", 0),
+            calibration_sign=getattr(args, "calibration_sign", 1.0),
+            calibration_magnitude=getattr(args, "calibration_magnitude", 0.5),
+        )
+
+
+class ActionCalibrationPolicy(PolicyBase):
+    """Fixed-action calibration policy for estimating action->world response.
+
+    Commands a constant delta on a single axis and records the end-effector
+    displacement. Used by ``run_action_calibration.py``.
+    """
+
+    name = "action_calibration"
+    config_class = ActionCalibrationPolicyArgs
+
+    def __init__(self, config: ActionCalibrationPolicyArgs):
+        super().__init__(config)
+        self._step = 0
+        self._axis = int(config.calibration_axis)
+        self._sign = float(config.calibration_sign)
+        self._magnitude = float(config.calibration_magnitude)
+        self._episode_idx = 0
+        try:
+            if os.path.exists(_TRACE_PATH):
+                os.remove(_TRACE_PATH)
+        except Exception:
+            pass
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        action[..., self._axis] = self._sign * self._magnitude
+        # Keep gripper open/neutral.
+        if action.shape[-1] >= 7:
+            action[..., -1] = 1.0
+
+        # Record eef position for calibration analysis.
+        try:
+            eef_pos = None
+            scene = env.unwrapped.scene
+            if "ee_frame" in scene.keys():
+                data = scene["ee_frame"].data
+                for attr in ("target_pos_w", "source_pos_w", "pos_w"):
+                    if hasattr(data, attr):
+                        pos = getattr(data, attr).squeeze().to(device)
+                        if pos.ndim > 1:
+                            pos = pos[0]
+                        if pos.numel() >= 3:
+                            eef_pos = pos
+                            break
+            if eef_pos is not None:
+                _append_trace({
+                    "episode": self._episode_idx,
+                    "step": self._step,
+                    "eef_x": float(eef_pos[0].item()),
+                    "eef_y": float(eef_pos[1].item()),
+                    "eef_z": float(eef_pos[2].item()),
+                    "action_axis": self._axis,
+                    "action_sign": self._sign,
+                    "action_magnitude": self._magnitude,
+                    "action_norm": float(torch.linalg.norm(action).item()),
+                })
+        except Exception:
+            pass
+
+        self._step += 1
+        return action
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        self._step = 0
+        self._episode_idx += 1
+
+    @staticmethod
+    def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        return parser
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "ActionCalibrationPolicy":
+        return ActionCalibrationPolicy(ActionCalibrationPolicyArgs.from_cli_args(args))

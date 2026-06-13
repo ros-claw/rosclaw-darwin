@@ -1,70 +1,44 @@
 version: 0.1.0
 
 rules:
+  - failure_type: target_not_reached
+    hints:
+      - faster_approach
+      - larger_servo_gain
+    confidence: 0.7
+    rationale: "The end-effector did not reach the object within the episode."
+
+  - failure_type: policy_noop
+    hints:
+      - action_activation_check
+    confidence: 0.9
+    rationale: "The policy produced near-zero actions."
+
   - failure_type: grasp_failed
     hints:
       - grasp_adjust
       - slower_descent
       - longer_gripper_close
     confidence: 0.7
-    rationale: "Grasp failure often benefits from slower descent and longer close phase."
+    rationale: "The end-effector reached the object but grasp was not successful."
 
   - failure_type: object_not_lifted
     hints:
-      - stronger_lift
       - longer_gripper_close
+      - stronger_lift
       - stabilize_lift
     confidence: 0.7
-    rationale: "Object not lifted suggests grasp or lift phase needs adjustment."
+    rationale: "The object was not lifted after grasp phase."
 
-  - failure_type: object_dropped
+  - failure_type: target_not_reached_after_lift
     hints:
-      - secure_hold
-      - stabilize_lift
-      - slower_release
+      - stronger_lift
+      - target_tracking
     confidence: 0.6
-    rationale: "Object dropped during transport suggests hold/release needs stabilization."
+    rationale: "The object was lifted but did not reach the command target."
 
   - failure_type: timeout
     hints:
       - efficient_execution
-      - shorter_search
     confidence: 0.5
-    rationale: "Timeout suggests policy should reduce redundant steps."
-
-  - failure_type: target_not_reached
-    hints:
-      - efficient_execution
-      - place_adjust
-    confidence: 0.6
-    rationale: "Target not reached suggests motion planning or placement adjustment."
-
-  - failure_type: door_not_closed
-    hints:
-      - close_adjust
-      - push_until_contact
-      - verify_door_state
-    confidence: 0.7
-    rationale: "Door close failure requires continued push and state verification."
-
-  - failure_type: object_not_placed
-    hints:
-      - place_adjust
-      - lower_release_height
-      - verify_object_on_target
-    confidence: 0.7
-    rationale: "Placement failure requires better release height and target verification."
-
-  - failure_type: policy_noop
-    hints:
-      - efficient_execution
-      - adaptive_skill
-    confidence: 0.4
-    rationale: "Policy produced no useful action; encourage adaptive retry."
-
-  - failure_type: arena_execution_error
-    hints:
-      - adaptive_skill
-      - verify_door_state
-    confidence: 0.3
-    rationale: "Execution error may be transient; adaptive retry with verification."
+    rationale: "The task timed out before completion."
