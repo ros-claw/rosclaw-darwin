@@ -5,7 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
-from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
+from rosclaw_darwin.tdl.schema import (
+    EmbodimentSpec,
+    EvalSpec,
+    ExecutionBackend,
+    ExecutionMode,
+    ExecutionSpec,
+    ObjectSpec,
+    ProvenanceSpec,
+    SceneSpec,
+    Task,
+    TaskSource,
+)
 
 from .base import SourceImporter
 
@@ -110,6 +121,15 @@ class LWBenchHubImporter(SourceImporter):
                 max_steps=record.get("max_steps", 1000),
                 max_episodes=record.get("max_episodes", 20),
             ),
+            execution=ExecutionSpec(
+                executable=True,
+                backend=ExecutionBackend.arena,
+                mode=ExecutionMode.docker,
+                requires_gpu=True,
+                requires_docker=True,
+                native_env_name=env_name,
+                adapter="arena",
+            ),
             provenance=ProvenanceSpec(
                 source=TaskSource.lw_benchhub,
                 source_repo=str(self.repo_path) if self.repo_path else None,
@@ -138,6 +158,12 @@ class LWBenchHubImporter(SourceImporter):
             embodiment=EmbodimentSpec(robot="unitree_g1"),
             objects=objects,
             primitives=primitives,
+            execution=ExecutionSpec(
+                executable=False,
+                backend=ExecutionBackend.unknown,
+                mode=ExecutionMode.unknown,
+                reason="lw_py_fallback_no_native_env",
+            ),
             provenance=ProvenanceSpec(
                 source=TaskSource.lw_benchhub,
                 source_repo=str(self.repo_path) if self.repo_path else None,

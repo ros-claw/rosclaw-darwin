@@ -35,6 +35,22 @@ from rosclaw_darwin.tdl.schema import Task
 from .base import BaseEnvironmentAdapter
 
 
+def _map_task_to_arena_env(task: Task, robot: str) -> dict[str, Any] | None:
+    """Use the capability registry to map a Task to Arena environment args.
+
+    Falls back to the legacy hard-coded mapper if the registry match is too weak.
+    """
+    from rosclaw_darwin.arena_bridge.task_matcher import TaskArenaMatcher
+
+    matcher = TaskArenaMatcher()
+    best = matcher.best_match(task, threshold=0.5)
+    if best is not None and best.executable:
+        args = matcher.build_arena_args(task)
+        if args is not None:
+            return args
+    return None
+
+
 def _patch_procedural_contact_sensor(obj: Any) -> None:
     """Monkey-patch get_contact_sensor_cfg for procedural objects.
 
@@ -1119,9 +1135,17 @@ class ArenaAdapter(BaseEnvironmentAdapter):
 
 
     def _map_primitives_to_arena_env(self, task: Task) -> dict[str, Any]:
-        """Map ROSClaw primitives to a valid IsaacLab-Arena example environment."""
+        """Map ROSClaw primitives to a valid IsaacLab-Arena example environment.
+
+        First tries the declarative capability registry; if the match is too weak
+        or fails, falls back to the legacy hard-coded mapping.
+        """
+        registry_args = _map_task_to_arena_env(task, self.robot)
+        if registry_args is not None:
+            return registry_args
+
+        # --- Legacy hard-coded fallback ---
         primitive_names = {p.name.lower() for p in task.primitives}
-        # Pick a representative object name and map it to Arena asset registry.
         raw_obj = task.objects[0].name if task.objects else "object"
         mapped_obj = _ArenaComponentMapper._OBJECT_MAP.get(raw_obj, raw_obj)
         if mapped_obj == "object" or mapped_obj not in _ArenaComponentMapper._LOCAL_ARENA_OBJECTS:
@@ -1131,11 +1155,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             (task.scene.name or task.scene.domain or "default").lower(), "procedural_table"
         )
 
-        # Kitchen tasks: use dedicated kitchen example environments when
-        # the scene is a kitchen and the primitives involve manipulation.
         if scene_name == "kitchen" and primitive_names & {"pick", "place", "open", "close"}:
-            # Sequential put-and-close task (place object + close door) maps to
-            # Arena's composite example environment.
             if "place" in primitive_names and "close" in primitive_names:
                 return {
                     "environment": "franka_put_and_close_door",
@@ -1148,7 +1168,6 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 "embodiment": "franka_joint_pos",
             }
 
-        # Defaults if no specific environment is matched.
         env_args: dict[str, Any] = {
             "environment": "lift_object",
             "object": mapped_obj,

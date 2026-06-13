@@ -5,7 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
-from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
+from rosclaw_darwin.tdl.schema import (
+    EmbodimentSpec,
+    EvalSpec,
+    ExecutionBackend,
+    ExecutionMode,
+    ExecutionSpec,
+    ObjectSpec,
+    ProvenanceSpec,
+    SceneSpec,
+    Task,
+    TaskSource,
+)
 
 from .base import SourceImporter
 
@@ -71,6 +82,12 @@ class RoboTwinImporter(SourceImporter):
             objects=objects,
             primitives=primitives,
             eval=EvalSpec(max_steps=1000, max_episodes=20),
+            execution=ExecutionSpec(
+                executable=True,
+                backend=ExecutionBackend.robotwin_replay,
+                mode=ExecutionMode.replay,
+                adapter="robotwin_replay",
+            ),
             provenance=ProvenanceSpec(
                 source=TaskSource.robotwin,
                 source_repo=str(self.repo_path) if self.repo_path else None,

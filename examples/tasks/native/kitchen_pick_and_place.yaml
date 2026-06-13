@@ -1,9 +1,9 @@
-id: darwin_mvp_21_put_object_in_microwave_and_close_door
-name: Put Object in Microwave and Close Door
-description: Pick an object, place it inside the microwave, and close the microwave door.
+id: darwin_kitchen_pick_and_place_cube
+name: Kitchen Pick and Place Cube
+description: Pick a cube and place it on a target in the kitchen.
 source: native
 domain: kitchen
-horizon: long
+horizon: short
 
 scene:
   name: kitchen
@@ -16,20 +16,19 @@ embodiment:
 objects:
   - name: cube
     affordances: [graspable]
-  - name: microwave
-    affordances: [openable, container]
+  - name: table
+    affordances: [surface]
 
 primitives:
   - name: pick
   - name: place
-  - name: close
 
 eval:
   success_conditions:
-    - object_inside_microwave
-    - door_closed
+    - object_placed
   failure_conditions:
     - timeout
+    - object_dropped
   metrics:
     - success_rate
     - completion_time
@@ -42,7 +41,7 @@ execution:
   mode: docker
   requires_gpu: true
   requires_docker: true
-  native_env_name: franka_put_and_close_door
+  native_env_name: kitchen_pick_and_place
   adapter: arena
 
 mutation:
@@ -53,6 +52,5 @@ mutation:
   difficulty: 1
 
 tags:
-  - mvp
   - kitchen
-  - sequential
+  - manipulation

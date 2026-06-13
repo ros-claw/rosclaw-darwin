@@ -35,9 +35,13 @@ class DashboardApp:
             })
 
         @self.app.get("/runs", response_class=HTMLResponse)
-        async def runs_page(request: Request) -> Any:
+        async def runs_page(request: Request, metric_scope: str = "all") -> Any:
+            runs = self._load_runs()
+            if metric_scope != "all":
+                runs = [r for r in runs if r.get("metadata", {}).get("metric_scope") == metric_scope]
             return self.templates.TemplateResponse(request, "runs.html", {
-                "runs": self._load_runs(),
+                "runs": runs,
+                "metric_scope": metric_scope,
             })
 
         @self.app.get("/evolution", response_class=HTMLResponse)
@@ -47,15 +51,26 @@ class DashboardApp:
             })
 
         @self.app.get("/tasks", response_class=HTMLResponse)
-        async def tasks_page(request: Request) -> Any:
+        async def tasks_page(request: Request, execution_filter: str = "all") -> Any:
+            tasks = self._load_tasks()
+            filtered = tasks
+            if execution_filter != "all":
+                filtered = [t for t in tasks if self._task_matches_execution_filter(t, execution_filter)]
             return self.templates.TemplateResponse(request, "tasks.html", {
-                "tasks": self._load_tasks(),
+                "tasks": filtered,
+                "execution_filter": execution_filter,
             })
 
         @self.app.get("/task-graph", response_class=HTMLResponse)
         async def task_graph_page(request: Request) -> Any:
             return self.templates.TemplateResponse(request, "task_graph.html", {
                 "graph": self._load_task_graph(),
+            })
+
+        @self.app.get("/arena-matches", response_class=HTMLResponse)
+        async def arena_matches_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "arena_matches.html", {
+                "matches": self._load_arena_matches(),
             })
 
         @self.app.get("/skills", response_class=HTMLResponse)
@@ -69,6 +84,18 @@ class DashboardApp:
         async def failures_page(request: Request) -> Any:
             return self.templates.TemplateResponse(request, "failures.html", {
                 "failures": self._load_failures(),
+            })
+
+        @self.app.get("/skill-hint-traces", response_class=HTMLResponse)
+        async def skill_hint_traces_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "skill_hint_traces.html", {
+                "traces": self._load_skill_hint_traces(),
+            })
+
+        @self.app.get("/ablations", response_class=HTMLResponse)
+        async def ablations_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "ablations.html", {
+                "ablations": self._load_ablations(),
             })
 
         @self.app.get("/leaderboard", response_class=HTMLResponse)
@@ -231,6 +258,9 @@ class DashboardApp:
                 "memory_integration_efficiency_score": metrics.get("memory_integration_efficiency_score", 0),
                 "memory_integration_efficiency_available": metrics.get("memory_integration_efficiency_available", False),
                 "success_rate": success_rate,
+                "skill_transfer_gain": metrics.get("skill_transfer_gain", 0),
+                "skill_candidate_count": metrics.get("skill_candidate_count", 0),
+                "skill_validated_count": metrics.get("skill_validated_count", 0),
             })
         entries.sort(key=lambda x: (
             x.get("evolution_score", 0),
@@ -239,6 +269,89 @@ class DashboardApp:
             x.get("success_rate", 0),
         ), reverse=True)
         return entries
+
+    def _task_matches_execution_filter(self, task: dict, execution_filter: str) -> bool:
+        execution = task.get("execution") or {}
+        if execution_filter == "executable":
+            return execution.get("executable") is True
+        if execution_filter == "semantic_only":
+            return execution.get("semantic_only") is True
+        if execution_filter == "arena":
+            return execution.get("backend") == "arena"
+        if execution_filter == "robotwin_replay":
+            return execution.get("backend") == "robotwin_replay"
+        if execution_filter == "mock":
+            return execution.get("backend") == "mock"
+        return True
+
+    def _load_arena_matches(self) -> list[dict]:
+        from rosclaw_darwin.arena_bridge.task_matcher import TaskArenaMatcher
+        from rosclaw_darwin.tdl.loader import TaskLoader
+
+        matcher = TaskArenaMatcher()
+        matches = []
+        for task_dict in self._load_tasks():
+            task_id = task_dict.get("id")
+            try:
+                task = TaskLoader().load(task_dict)
+                best = matcher.best_match(task)
+                matches.append({
+                    "task_id": task_id,
+                    "best_env": best.env_name if best else None,
+                    "score": best.score if best else 0.0,
+                    "matched_primitives": best.matched_primitives if best else [],
+                    "missing_primitives": best.missing_required_primitives if best else [],
+                    "warnings": best.warnings if best else [],
+                })
+            except Exception:
+                continue
+        return matches
+
+    def _load_skill_hint_traces(self) -> list[dict]:
+        traces = []
+        for evo in self._load_evolution_runs():
+            hint_source = evo.get("hint_source", {})
+            loops = evo.get("loop_results", [])
+            if not loops or not hint_source.get("auto"):
+                continue
+            loop1 = loops[0]
+            loop2 = loops[-1]
+            metrics = evo.get("evolution_metrics", {})
+            traces.append({
+                "run_id": evo.get("run_id"),
+                "task_id": evo.get("task_id"),
+                "policy_id": evo.get("policy_id"),
+                "loop1_failure_types": loop1.get("failure_types", {}),
+                "auto_hints": hint_source.get("auto", []),
+                "manual_hints": hint_source.get("manual", []),
+                "loop2_metrics": loop2.get("metrics", {}),
+                "skill_transfer_gain": metrics.get("skill_transfer_gain", 0.0),
+            })
+        return traces
+
+    def _load_ablations(self) -> list[dict]:
+        """Group evolution runs by task_id and compare no-hint vs auto-hint runs."""
+        by_task: dict[str, dict[str, dict]] = {}
+        for evo in self._load_evolution_runs():
+            task_id = evo.get("task_id")
+            hint_source = evo.get("hint_source", {})
+            key = "with_auto_hints" if hint_source.get("auto") else "without_hints"
+            by_task.setdefault(task_id, {})[key] = evo
+        ablations = []
+        for task_id, variants in by_task.items():
+            without = variants.get("without_hints", {})
+            with_auto = variants.get("with_auto_hints", {})
+            without_metrics = without.get("evolution_metrics", {})
+            with_metrics = with_auto.get("evolution_metrics", {})
+            ablations.append({
+                "task_id": task_id,
+                "without_hints_sr": without_metrics.get("delta_success_rate", 0.0),
+                "with_auto_hints_sr": with_metrics.get("delta_success_rate", 0.0),
+                "skill_transfer_gain": with_metrics.get("skill_transfer_gain", 0.0),
+                "without_run_id": without.get("run_id"),
+                "with_run_id": with_auto.get("run_id"),
+            })
+        return ablations
 
     def run(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         import uvicorn

@@ -241,6 +241,8 @@ def evolve(
     out: str = typer.Option("data/evolution_runs", "--out", help="Output directory"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Dry run (arena only: generate command without executing)"),
     seed: int | None = typer.Option(None, "--seed", help="Random seed for deterministic mock evolution"),
+    auto_skill_hints: bool = typer.Option(False, "--auto-skill-hints", help="Auto-generate skill hints from Loop 1 failures for Loop 2"),
+    hint_rules: str = typer.Option("configs/skills/failure_to_hint_rules.yaml", "--hint-rules", help="Path to failure-to-hint rules YAML"),
 ) -> None:
     """Run evolution evaluation for a task."""
     loader = TaskLoader()
@@ -266,7 +268,14 @@ def evolve(
         raise typer.Exit(1)
 
     runner = EvolutionRunner(env)
-    report = runner.evolve(t, policy_config, loops=loops, episodes=episodes)
+    report = runner.evolve(
+        t,
+        policy_config,
+        loops=loops,
+        episodes=episodes,
+        auto_skill_hints=auto_skill_hints,
+        hint_rules_path=hint_rules,
+    )
 
     run_dir = ensure_dir(out) / report["run_id"]
     save_evolution_report(
@@ -298,6 +307,9 @@ def suite(
     policy: str = typer.Option("configs/policies/zero_action.yaml", "--policy", help="Policy config for run"),
     loops: int = typer.Option(1, "--loops", help="Evolution loops per task"),
     episodes: int = typer.Option(1, "--episodes", help="Episodes per loop"),
+    filter_expr: str | None = typer.Option(None, "--filter", help="Filter expression, e.g. execution.executable=true"),
+    auto_skill_hints: bool = typer.Option(False, "--auto-skill-hints", help="Auto-generate skill hints from Loop 1 failures for Loop 2"),
+    hint_rules: str = typer.Option("configs/skills/failure_to_hint_rules.yaml", "--hint-rules", help="Path to failure-to-hint rules YAML"),
 ) -> None:
     """Create or run a task suite."""
     if action == "create":
@@ -315,13 +327,40 @@ def suite(
                 import glob
                 all_tasks.extend(glob.glob(pattern, recursive="**" in pattern))
         all_tasks = sorted(set(all_tasks))
+
+        filtered_tasks = all_tasks
+        if filter_expr:
+            filtered_tasks = [t for t in all_tasks if _task_matches_filter(t, filter_expr)]
+            if len(filtered_tasks) < len(all_tasks):
+                console.print(f"[yellow]Filter '{filter_expr}' excluded {len(all_tasks) - len(filtered_tasks)} tasks[/yellow]")
+
+        backend_counts: dict[str, int] = {}
+        executable_count = 0
+        semantic_only_count = 0
+        for t in filtered_tasks:
+            meta = _load_task_execution_meta(t)
+            backend_counts[meta.get("backend", "unknown")] = backend_counts.get(meta.get("backend", "unknown"), 0) + 1
+            if meta.get("executable"):
+                executable_count += 1
+            if meta.get("semantic_only"):
+                semantic_only_count += 1
+
         suite_data = {
             "name": name or "unnamed_suite",
-            "tasks": all_tasks,
+            "tasks": filtered_tasks,
+            "summary": {
+                "total": len(filtered_tasks),
+                "by_execution_backend": backend_counts,
+                "executable_count": executable_count,
+                "semantic_only_count": semantic_only_count,
+                "metrics_computed_on": "executable_only",
+            },
         }
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(yaml.dump(suite_data, sort_keys=False))
-        console.print(f"[green]Suite with {len(all_tasks)} tasks saved to {out}[/green]")
+        console.print(f"[green]Suite with {len(filtered_tasks)} tasks ({len(all_tasks)} before filter) saved to {out}[/green]")
+        if semantic_only_count > 0:
+            console.print(f"[yellow]Warning: {semantic_only_count} semantic-only tasks are excluded from execution metrics.[/yellow]")
     elif action == "run":
         if not suite_file:
             console.print("[red]--suite required for run[/red]")
@@ -352,7 +391,14 @@ def suite(
 
             runner = EvolutionRunner(env)
             try:
-                report = runner.evolve(t, policy_config, loops=loops, episodes=episodes)
+                report = runner.evolve(
+                    t,
+                    policy_config,
+                    loops=loops,
+                    episodes=episodes,
+                    auto_skill_hints=auto_skill_hints,
+                    hint_rules_path=hint_rules,
+                )
             except Exception as e:
                 console.print(f"    [red]Evolution failed: {e}[/red]")
                 summary_rows.append({"task": t.id, "status": "evolution_error", "error": str(e)})
@@ -400,6 +446,84 @@ def _load_policy_config(path: str) -> dict[str, Any]:
     if p.suffix == ".json":
         return json.loads(p.read_text())
     return {}
+
+
+@app.command(name="arena-match")
+def arena_match(
+    task: str = typer.Option(..., "--task", help="Path to task YAML"),
+) -> None:
+    """Show the best Arena environment match for a task."""
+    from rosclaw_darwin.arena_bridge.task_matcher import TaskArenaMatcher
+
+    t = TaskLoader().load(task)
+    matcher = TaskArenaMatcher()
+    best = matcher.best_match(t)
+    if best is None:
+        console.print(f"[red]No Arena environment matches task {t.id}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Best match for {t.id}:[/green] {best.env_name}")
+    console.print(f"  score: {best.score}")
+    console.print(f"  native_env_name: {best.native_env_name}")
+    console.print(f"  matched_primitives: {', '.join(best.matched_primitives)}")
+    if best.missing_required_primitives:
+        console.print(f"  missing_required_primitives: {', '.join(best.missing_required_primitives)}")
+    if best.warnings:
+        console.print(f"  warnings: {best.warnings}")
+    args = matcher.build_arena_args(t)
+    if args:
+        console.print(f"  arena_args: {args}")
+
+
+def _load_task_execution_meta(task_path: str) -> dict[str, Any]:
+    """Lightweight load of execution metadata for suite filtering."""
+    try:
+        data = yaml.safe_load(Path(task_path).read_text()) or {}
+    except Exception:
+        return {"executable": False, "backend": "unknown", "semantic_only": False}
+    execution = data.get("execution") or {}
+    raw_backend = execution.get("backend", "unknown")
+    raw_executable = execution.get("executable", False)
+    raw_semantic = execution.get("semantic_only", False)
+    if isinstance(raw_executable, str):
+        raw_executable = raw_executable.lower() == "true"
+    if isinstance(raw_semantic, str):
+        raw_semantic = raw_semantic.lower() == "true"
+    return {
+        "executable": raw_executable,
+        "backend": raw_backend,
+        "semantic_only": raw_semantic,
+    }
+
+
+def _task_matches_filter(task_path: str, filter_expr: str) -> bool:
+    """Evaluate a simple key=value filter expression against task execution metadata.
+
+    Supports dotted keys like execution.executable=true and execution.backend=arena.
+    """
+    if "=" not in filter_expr:
+        console.print(f"[red]Invalid filter expression: {filter_expr}[/red]")
+        return False
+    key, value = filter_expr.split("=", 1)
+    data = _load_task_execution_meta(task_path)
+    actual = data.get(key)
+    # Also allow dotted keys such as execution.executable by falling back to the leaf name.
+    if actual is None and "." in key:
+        actual = data.get(key.split(".")[-1])
+    if actual is None and "." in key:
+        # Try nested lookup on raw YAML for future extensibility.
+        try:
+            raw = yaml.safe_load(Path(task_path).read_text()) or {}
+            for part in key.split("."):
+                raw = raw.get(part, {}) if isinstance(raw, dict) else None
+            actual = raw if raw != {} else None
+        except Exception:
+            actual = None
+    # Treat missing boolean fields as False.
+    if actual is None and value.lower() in ("true", "false"):
+        actual = False
+    if isinstance(actual, bool):
+        return actual == (value.lower() == "true")
+    return str(actual).lower() == value.lower()
 
 
 if __name__ == "__main__":

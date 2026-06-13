@@ -1,11 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Tasks - ROSClaw-Darwin{% endblock %}
 {% block content %}
-<div class="card"><h1>📋 Task Registry</h1></div>
+<div class="card">
+  <h1>📋 Task Registry</h1>
+  <p>Filter:
+    <a href="/tasks?execution_filter=all" class="badge {% if execution_filter == 'all' %}badge-success{% else %}badge-fail{% endif %}">All</a>
+    <a href="/tasks?execution_filter=executable" class="badge {% if execution_filter == 'executable' %}badge-success{% else %}badge-fail{% endif %}">Executable</a>
+    <a href="/tasks?execution_filter=arena" class="badge {% if execution_filter == 'arena' %}badge-success{% else %}badge-fail{% endif %}">Arena</a>
+    <a href="/tasks?execution_filter=robotwin_replay" class="badge {% if execution_filter == 'robotwin_replay' %}badge-success{% else %}badge-fail{% endif %}">RoboTwin Replay</a>
+    <a href="/tasks?execution_filter=semantic_only" class="badge {% if execution_filter == 'semantic_only' %}badge-success{% else %}badge-fail{% endif %}">Semantic-only</a>
+    <a href="/tasks?execution_filter=mock" class="badge {% if execution_filter == 'mock' %}badge-success{% else %}badge-fail{% endif %}">Mock-only</a>
+  </p>
+</div>
 {% if tasks %}
 <div class="card">
   <table>
-    <tr><th>ID</th><th>Name</th><th>Domain</th><th>Horizon</th><th>Source</th><th>Difficulty</th></tr>
+    <tr><th>ID</th><th>Name</th><th>Domain</th><th>Horizon</th><th>Source</th><th>Backend</th><th>Mode</th><th>Executable</th><th>Semantic-only</th></tr>
     {% for task in tasks %}
     <tr>
       <td><code>{{ task.id }}</code></td>
@@ -13,7 +23,10 @@
       <td>{{ task.domain }}</td>
       <td>{{ task.horizon }}</td>
       <td>{{ task.source }}</td>
-      <td>{{ task.mutation.difficulty if task.mutation else 1 }}</td>
+      <td>{{ task.execution.backend if task.execution else 'unknown' }}</td>
+      <td>{{ task.execution.mode if task.execution else 'unknown' }}</td>
+      <td>{{ task.execution.executable if task.execution else False }}</td>
+      <td>{{ task.execution.semantic_only if task.execution else False }}</td>
     </tr>
     {% endfor %}
   </table>

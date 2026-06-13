@@ -5,7 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from rosclaw_darwin.sources.primitive_inference import enrich_objects, infer_primitives
-from rosclaw_darwin.tdl.schema import EmbodimentSpec, EvalSpec, ObjectSpec, ProvenanceSpec, SceneSpec, Task, TaskSource
+from rosclaw_darwin.tdl.schema import (
+    EmbodimentSpec,
+    EvalSpec,
+    ExecutionBackend,
+    ExecutionMode,
+    ExecutionSpec,
+    ObjectSpec,
+    ProvenanceSpec,
+    SceneSpec,
+    Task,
+    TaskSource,
+)
 
 from .base import SourceImporter
 
@@ -101,6 +112,13 @@ class Behavior1KImporter(SourceImporter):
             objects=objects,
             primitives=primitives,
             eval=EvalSpec(success_conditions=success_conditions),
+            execution=ExecutionSpec(
+                executable=False,
+                backend=ExecutionBackend.behavior_semantic,
+                mode=ExecutionMode.semantic_only,
+                semantic_only=True,
+                reason="behavior1k_semantic_import_only",
+            ),
             provenance=ProvenanceSpec(
                 source=TaskSource.behavior1k,
                 source_repo=str(self.repo_path) if self.repo_path else None,
@@ -133,6 +151,13 @@ class Behavior1KImporter(SourceImporter):
             objects=objects,
             primitives=primitives,
             eval=EvalSpec(success_conditions=success_conditions),
+            execution=ExecutionSpec(
+                executable=False,
+                backend=ExecutionBackend.behavior_semantic,
+                mode=ExecutionMode.semantic_only,
+                semantic_only=True,
+                reason="behavior1k_semantic_import_only",
+            ),
             provenance=ProvenanceSpec(
                 source=TaskSource.behavior1k,
                 source_repo=str(self.repo_path) if self.repo_path else None,

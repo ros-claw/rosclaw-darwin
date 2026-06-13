@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Skill Hint Traces - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>💡 Skill Hint Traces</h1></div>
+{% if traces %}
+{% for trace in traces %}
+<div class="card">
+  <h3>{{ trace.task_id }} <small>({{ trace.run_id }})</small></h3>
+  <p><strong>Loop 1 failures:</strong> {{ trace.loop1_failure_types }}</p>
+  <p><strong>Auto hints:</strong>
+    {% for h in trace.auto_hints %}
+      <span class="badge badge-success">{{ h.name }}</span>
+    {% endfor %}
+  </p>
+  <p><strong>Loop 2 metrics:</strong> {{ trace.loop2_metrics }}</p>
+  <p><strong>Skill transfer gain:</strong> <span class="metric">{{ "%.3f"|format(trace.skill_transfer_gain) }}</span></p>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p>No skill hint traces found. Run an evolution with <code>--auto-skill-hints</code>.</p></div>
+{% endif %}
+{% endblock %}

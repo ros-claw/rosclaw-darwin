@@ -1,0 +1,151 @@
+version: 0.1.0
+
+environments:
+  lift_object:
+    backend: arena
+    scene_domains: [tabletop, default]
+    supported_primitives: [pick, lift]
+    required_primitives: []
+    supported_objects: [dex_cube, block, object, cube]
+    supported_robots: [franka, franka_ik, franka_joint]
+    horizon: atomic
+    native_env_name: lift_object
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - object_height
+      - failure_type
+
+  kitchen_pick_and_place:
+    backend: arena
+    scene_domains: [kitchen, default]
+    supported_primitives: [pick, place]
+    required_primitives: [pick, place]
+    supported_objects: [cube, mug, cracker_box, mustard_bottle, sugar_box, tomato_soup_can, bottle, bowl, object]
+    supported_robots: [franka, franka_joint, franka_ik]
+    horizon: short
+    native_env_name: kitchen_pick_and_place
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - collision_count
+      - failure_type
+
+  franka_put_and_close_door:
+    backend: arena
+    scene_domains: [kitchen]
+    supported_primitives: [pick, place, close]
+    required_primitives: [place, close]
+    required_objects: [microwave]
+    supported_objects: [cube, object, microwave, mug, cracker_box]
+    supported_robots: [franka, franka_ik]
+    horizon: composite
+    native_env_name: franka_put_and_close_door
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - door_closed
+      - object_placed
+      - failure_type
+
+  tabletop_sort_cubes:
+    backend: arena
+    scene_domains: [tabletop, packing_table]
+    supported_primitives: [sort, pick, place]
+    required_primitives: [sort]
+    supported_objects: [red_cube, green_cube, cube]
+    supported_robots: [franka, franka_ik]
+    horizon: short
+    native_env_name: tabletop_sort_cubes
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - sort_accuracy
+      - failure_type
+
+  press_button:
+    backend: arena
+    scene_domains: [tabletop, packing_table, default]
+    supported_primitives: [press]
+    required_primitives: [press]
+    supported_objects: [coffee_machine, button]
+    supported_robots: [franka, franka_ik]
+    horizon: atomic
+    native_env_name: press_button
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - button_pressed
+      - failure_type
+
+  cube_goal_pose:
+    backend: arena
+    scene_domains: [tabletop]
+    supported_primitives: [orient, rotate]
+    required_primitives: []
+    supported_objects: [dex_cube, cube]
+    supported_robots: [franka, franka_ik]
+    horizon: atomic
+    native_env_name: cube_goal_pose
+    policy_types:
+      - zero_action
+      - heuristic_lift
+    metrics:
+      - success_rate
+      - progress
+      - pose_error
+      - failure_type
+
+mappings:
+  objects:
+    milk_carton: milk_carton_hot3d_robolab
+    cracker_box: cracker_box
+    mustard_bottle: mustard_bottle
+    sugar_box: sugar_box
+    tomato_soup_can: tomato_soup_can
+    power_drill: power_drill
+    microwave: microwave
+    coffee_machine: coffee_machine
+    mug: mug
+    bowl: bowl_ycb_robolab
+    banana: banana_ycb_robolab
+    brick: brick_ycb_robolab
+    plate: wooden_bowl_hot3d_robolab
+    cup: mug
+    bottle: beer_bottle
+    can: soup_can_hot3d_robolab
+    box: brown_box
+    cube: dex_cube
+    sphere: sphere
+    bin: blue_sorting_bin
+    container: red_container
+    procedural_cube: procedural_cube
+  scenes:
+    kitchen_modern_01: kitchen
+    kitchen: kitchen
+    table_simple: table
+    table: table
+    packing_table: packing_table
+    galileo: galileo
+    robolab: maple_table_robolab
+    default: procedural_table
+  robots:
+    franka: franka_ik
+    franka_ik: franka_ik
+    franka_joint: franka_joint
+    kuka_allegro: kuka_allegro

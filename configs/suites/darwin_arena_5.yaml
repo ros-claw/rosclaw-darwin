@@ -1,0 +1,19 @@
+name: darwin_arena_5
+tasks:
+  - /code/rosclaw/rosclaw_darwin/rosclaw-darwin/examples/tasks/native/lift_object.yaml
+  - /code/rosclaw/rosclaw_darwin/rosclaw-darwin/examples/tasks/native/kitchen_pick_and_place.yaml
+  - /code/rosclaw/rosclaw_darwin/rosclaw-darwin/examples/tasks/native/put_object_in_microwave_and_close_door.yaml
+  - /tmp/darwin_imported/lw/lw_snacksorting.yaml
+  - /tmp/darwin_mutated/darwin_mvp_03_lift_object_mut_000.yaml
+summary:
+  total: 5
+  by_execution_backend:
+    arena: 5
+  executable_count: 5
+  semantic_only_count: 0
+  metrics_computed_on: executable_only
+metadata:
+  description: "5-task Arena benchmark for Darwin evolution"
+  backend: arena
+  mode: docker
+  executable: true

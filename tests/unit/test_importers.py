@@ -16,6 +16,9 @@ class TestLWImporter:
         task = importer.import_task({"name": "test_task", "environment": "env1"})
         assert task.id.startswith("lw_")
         assert task.provenance.source == "lw_benchhub"
+        assert task.execution.executable is True
+        assert task.execution.backend == "arena"
+        assert task.execution.mode == "docker"
 
 
 class TestRoboTwinImporter:
@@ -40,3 +43,7 @@ class TestBehavior1KImporter:
         })
         assert task.id.startswith("behavior1k_")
         assert task.metadata.get("semantic_only") is True
+        assert task.execution.semantic_only is True
+        assert task.execution.executable is False
+        assert task.execution.backend == "behavior_semantic"
+        assert task.execution.mode == "semantic_only"

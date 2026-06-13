@@ -1,9 +1,18 @@
 {% extends "base.html" %}{% block title %}Runs - ROSClaw-Darwin{% endblock %}{% block content %}
-<div class="card"><h1>📊 Evaluation Runs</h1></div>
+<div class="card">
+  <h1>📊 Evaluation Runs</h1>
+  <p>Metric scope:
+    <a href="/runs?metric_scope=all" class="badge {% if metric_scope == 'all' %}badge-success{% else %}badge-fail{% endif %}">All</a>
+    <a href="/runs?metric_scope=arena_real" class="badge {% if metric_scope == 'arena_real' %}badge-success{% else %}badge-fail{% endif %}">arena_real</a>
+    <a href="/runs?metric_scope=mock_ci" class="badge {% if metric_scope == 'mock_ci' %}badge-success{% else %}badge-fail{% endif %}">mock_ci</a>
+    <a href="/runs?metric_scope=semantic_only" class="badge {% if metric_scope == 'semantic_only' %}badge-success{% else %}badge-fail{% endif %}">semantic_only</a>
+  </p>
+</div>
 {% if runs %}
-<div class="card"><table><tr><th>Run ID</th><th>Task</th><th>Adapter</th><th>Status</th><th>Success Rate</th></tr>
+<div class="card"><table><tr><th>Run ID</th><th>Task</th><th>Adapter</th><th>Status</th><th>Scope</th><th>Success Rate</th></tr>
 {% for run in runs %}<tr><td><code>{{ run.run_id }}</code></td><td>{{ run.task_id }}</td><td>{{ run.adapter }}</td>
 <td><span class="badge {% if run.status == 'completed' %}badge-success{% else %}badge-fail{% endif %}">{{ run.status }}</span></td>
+<td>{{ run.metadata.metric_scope if run.metadata else 'unknown' }}</td>
 <td class="metric">{{ "%.2f"|format(run.metrics.get('success_rate', 0) * 100) }}%</td></tr>
 {% endfor %}</table></div>
 {% else %}

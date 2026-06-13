@@ -26,6 +26,25 @@ class TaskSource(str, Enum):
     unknown = "unknown"
 
 
+class ExecutionBackend(str, Enum):
+    arena = "arena"
+    robotwin_replay = "robotwin_replay"
+    behavior_semantic = "behavior_semantic"
+    mock = "mock"
+    native = "native"
+    unknown = "unknown"
+
+
+class ExecutionMode(str, Enum):
+    live = "live"
+    docker = "docker"
+    subprocess = "subprocess"
+    replay = "replay"
+    semantic_only = "semantic_only"
+    mock = "mock"
+    unknown = "unknown"
+
+
 class Affordance(str, Enum):
     graspable = "graspable"
     movable = "movable"
@@ -79,6 +98,19 @@ class EvalSpec(BaseModel):
     max_episodes: int | None = None
 
 
+class ExecutionSpec(BaseModel):
+    executable: bool = False
+    backend: ExecutionBackend | str = ExecutionBackend.unknown
+    mode: ExecutionMode | str = ExecutionMode.unknown
+    requires_gpu: bool = False
+    requires_docker: bool = False
+    semantic_only: bool = False
+    reason: str | None = None
+    native_env_name: str | None = None
+    adapter: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class MutationSpec(BaseModel):
     allowed: list[str] = Field(default_factory=list)
     difficulty: int = 1
@@ -111,6 +143,7 @@ class Task(BaseModel):
 
     constraints: list[str] = Field(default_factory=list)
     eval: EvalSpec = Field(default_factory=EvalSpec)
+    execution: ExecutionSpec = Field(default_factory=ExecutionSpec)
     mutation: MutationSpec = Field(default_factory=MutationSpec)
     provenance: ProvenanceSpec | None = None
 

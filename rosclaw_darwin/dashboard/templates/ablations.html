@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Ablations - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🔬 Skill Hint Ablations</h1></div>
+{% if ablations %}
+<div class="card">
+  <table>
+    <tr><th>Task</th><th>ΔSR without hints</th><th>ΔSR with auto hints</th><th>Skill transfer gain</th><th>Without run</th><th>With run</th></tr>
+    {% for a in ablations %}
+    <tr>
+      <td><code>{{ a.task_id }}</code></td>
+      <td class="metric">{{ "%.3f"|format(a.without_hints_sr) }}</td>
+      <td class="metric">{{ "%.3f"|format(a.with_auto_hints_sr) }}</td>
+      <td class="metric">{{ "%.3f"|format(a.skill_transfer_gain) }}</td>
+      <td><code>{{ a.without_run_id or '-' }}</code></td>
+      <td><code>{{ a.with_run_id or '-' }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card"><p>No ablation pairs found. Run evolutions with and without <code>--auto-skill-hints</code> for the same task.</p></div>
+{% endif %}
+{% endblock %}

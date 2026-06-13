@@ -1,0 +1,9 @@
+policy_id: heuristic_lift_with_manual_hints
+type: heuristic_lift
+strength: 0.7
+memory_bonus: 0.0
+policy_config_dict:
+  skill_hints:
+    - grasp_adjust
+    - efficient_execution
+    - adaptive_skill
