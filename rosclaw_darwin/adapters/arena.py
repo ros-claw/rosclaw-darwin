@@ -947,18 +947,6 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         # --- real / docker / subprocess mode ---
         from rosclaw_darwin.evaluation.arena_runner import ArenaRunner
 
-        arena_repo = self._get_arena_repo()
-        if arena_repo is None or not Path(arena_repo).exists():
-            return EvaluationResult(
-                run_id=run_id,
-                task_id=self.task.id,
-                policy_id=policy_config.get("policy_id", "unknown"),
-                adapter=self.name,
-                status="environment_missing",
-                metrics={},
-                metadata={"error": "Arena repo not found. Set ROSCLAW_ARENA_REPO=/path/to/IsaacLab-Arena."},
-            )
-
         if self._mode == "docker":
             runner = ArenaRunner(mode="docker")
             # Map ROSClaw task to Arena eval job format
@@ -995,11 +983,12 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             if policy_type == "onnx_wbc":
                 policy_type = "isaaclab_arena.policy.onnx_wbc_action_policy.OnnxWbcActionPolicy"
             # Forward skill hints into the policy's config dict so Arena-side
-            # heuristic policies can consume them.
-            policy_config_dict = {
-                **policy_config.get("policy_config_dict", {}),
-                "skill_hints": policy_config.get("skill_hints", []),
-            }
+            # heuristic policies can consume them. Only pass the key to policies
+            # that declare a config_class accepting it; builtin policies like
+            # zero_action do not tolerate unknown kwargs.
+            policy_config_dict = dict(policy_config.get("policy_config_dict", {}))
+            if policy_type.startswith("heuristic_policy."):
+                policy_config_dict["skill_hints"] = policy_config.get("skill_hints", [])
             # For heuristic policies use step-based rollout so we can observe
             # behaviour across multiple steps even if episodes end early.
             if policy_type == "heuristic_policy.HeuristicLiftPolicy":
