@@ -157,6 +157,8 @@ class ArenaRunner:
                 "docker", "run", "--rm", "--gpus", "all",
                 "-e", "ACCEPT_EULA=Y",
                 "-e", "DISPLAY=",
+                "-e", "OPENBLAS_NUM_THREADS=1",
+                "-e", "OMP_NUM_THREADS=1",
                 "--entrypoint", "",
                 # Mount eval config
                 "-v", f"{config_path}:/workspace/data/eval_jobs.json",
@@ -182,6 +184,8 @@ class ArenaRunner:
                 # Mount permissive object_reference patch (allows non-Z-axis
                 # parent rotations in kitchen_pick_and_place etc.).
                 "-v", f"{DEPS_DIR / 'object_reference.py'}:/workspace/isaaclab_arena/assets/object_reference.py",
+                # Mount XformPrimView patch (standardizes Mesh/Scope prims from 6.0 assets).
+                "-v", f"{DEPS_DIR / 'xform_prim_view.py'}:/workspace/submodules/IsaacLab/source/isaaclab/isaaclab/sim/views/xform_prim_view.py",
                 # Mount bootstrap
                 "-v", f"{DEPS_DIR / 'run_eval.py'}:/workspace/data/run_eval.py",
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",

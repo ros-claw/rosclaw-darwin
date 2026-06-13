@@ -48,7 +48,10 @@ class EvolutionRunner:
         self.memory = memory_bridge or MemoryBridge()
         self.how = how_bridge or HowBridge()
         self.config = config or {}
-        self.skill_registry = SkillRegistry(self.config.get("skill_discovery"))
+        skill_config = dict(self.config.get("skill_discovery") or {})
+        if "path" not in skill_config:
+            skill_config["path"] = "data/skills/registry.json"
+        self.skill_registry = SkillRegistry(skill_config)
 
     def evolve(
         self,
@@ -63,6 +66,11 @@ class EvolutionRunner:
         """
         run_id = f"evo_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         loop_results: list[EvaluationResult] = []
+
+        # --- Skill transfer: inject relevant validated skills into the policy ---
+        relevant_skills = self.skill_registry.query_for_task(task)
+        if relevant_skills:
+            policy_config.setdefault("skill_hints", [s.name for s in relevant_skills])
 
         # --- Loop 1: First Encounter ---
         result1 = self.adapter.run_policy(policy_config, episodes=episodes)

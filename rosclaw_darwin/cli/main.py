@@ -296,6 +296,8 @@ def suite(
     out: str = typer.Option(None, "--out", help="Output path"),
     adapter: str = typer.Option("mock", "--adapter", help="Adapter for run"),
     policy: str = typer.Option("configs/policies/zero_action.yaml", "--policy", help="Policy config for run"),
+    loops: int = typer.Option(1, "--loops", help="Evolution loops per task"),
+    episodes: int = typer.Option(1, "--episodes", help="Episodes per loop"),
 ) -> None:
     """Create or run a task suite."""
     if action == "create":
@@ -326,10 +328,52 @@ def suite(
             raise typer.Exit(1)
         suite_data = yaml.safe_load(Path(suite_file).read_text())
         console.print(f"[cyan]Running suite: {suite_data.get('name')}[/cyan]")
+        policy_config = _load_policy_config(policy)
+        policy_config.setdefault("policy_id", Path(policy).stem)
+
+        summary_rows = []
         for task_path in suite_data.get("tasks", []):
             console.print(f"  Running {task_path}...")
-            # Delegate to run command logic
-            # (simplified for MVP)
+            try:
+                t = TaskLoader().load(task_path)
+            except Exception as e:
+                console.print(f"    [red]Failed to load {task_path}: {e}[/red]")
+                summary_rows.append({"task": task_path, "status": "load_error", "error": str(e)})
+                continue
+
+            if adapter == "mock":
+                env = MockAdapter(t)
+            elif adapter == "arena":
+                from rosclaw_darwin.adapters.arena import ArenaAdapter
+                env = ArenaAdapter(t)
+            else:
+                console.print(f"[red]Unknown adapter: {adapter}[/red]")
+                raise typer.Exit(1)
+
+            runner = EvolutionRunner(env)
+            try:
+                report = runner.evolve(t, policy_config, loops=loops, episodes=episodes)
+            except Exception as e:
+                console.print(f"    [red]Evolution failed: {e}[/red]")
+                summary_rows.append({"task": t.id, "status": "evolution_error", "error": str(e)})
+                continue
+
+            evo = report.get("evolution_metrics", {})
+            summary_rows.append({
+                "task": t.id,
+                "status": "completed",
+                "success_rate": report.get("loop_results", [{}])[-1].get("metrics", {}).get("success_rate", 0.0),
+                "delta_success_rate": evo.get("delta_success_rate", 0.0),
+                "skill_discovery_rate": evo.get("skill_discovery_rate", 0.0),
+                "evolution_score": evo.get("evolution_score", 0.0),
+            })
+
+        out_path = Path(out or f"data/suites/{suite_data.get('name')}_summary.json")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(summary_rows, indent=2))
+        console.print(f"[green]Suite summary saved to {out_path}[/green]")
+        for row in summary_rows:
+            console.print(f"  {row}")
     else:
         console.print(f"[red]Unknown suite action: {action}[/red]")
         raise typer.Exit(1)

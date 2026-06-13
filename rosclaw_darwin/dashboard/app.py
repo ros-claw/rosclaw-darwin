@@ -154,6 +154,16 @@ class DashboardApp:
         """Load skill candidates that have not yet been validated."""
         validated_fps = {s.get("fingerprint") for s in self._load_skills()}
         candidates: list[dict] = []
+        # 1. Load persisted registry candidates
+        path = self.data_dir / "skills" / "registry.json"
+        if path.exists():
+            try:
+                for c in json.loads(path.read_text()).get("candidates", []):
+                    if c.get("fingerprint") not in validated_fps:
+                        candidates.append(c)
+            except Exception:
+                pass
+        # 2. Aggregate candidates from evolution runs
         for evo in self._load_evolution_runs():
             for s in evo.get("candidate_skills", []):
                 fp = s.get("fingerprint")

@@ -47,9 +47,23 @@ class MockAdapter(BaseEnvironmentAdapter):
         difficulty = self.task.mutation.difficulty
         strength = policy_config.get("strength", 0.5)
         memory_bonus = policy_config.get("memory_bonus", 0.0)
+        skill_hints = policy_config.get("skill_hints", [])
+
+        # Skill transfer bonus: relevant skill hints improve mock success probability.
+        task_primitives = {p.name.lower() for p in self.task.primitives}
+        manipulation_primitives = {"pick", "place", "open", "close", "grasp", "lift"}
+        skill_bonus = 0.0
+        for hint in skill_hints:
+            hint_lower = hint.lower()
+            if hint_lower in task_primitives or (
+                hint_lower in {"grasp_adjust", "efficient_execution", "adaptive_skill"}
+                and task_primitives & manipulation_primitives
+            ):
+                skill_bonus += 0.15
+        skill_bonus = min(skill_bonus, 0.3)
 
         # Compute success probability
-        success_prob = max(0.0, min(1.0, strength + memory_bonus - 0.1 * difficulty))
+        success_prob = max(0.0, min(1.0, strength + memory_bonus + skill_bonus - 0.1 * difficulty))
         rng = random.Random(self.task.mutation.seed)
 
         results: list[dict] = []

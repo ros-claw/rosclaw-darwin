@@ -34,6 +34,19 @@ def test_pick_place_primitive_maps_to_lift_object() -> None:
     assert args["object"] == "bowl_ycb_robolab"
 
 
+def test_kitchen_pick_place_maps_to_kitchen_env() -> None:
+    task = _task_with_primitives(
+        "kitchen_pick_mug",
+        [("Pick", {"target": "mug"}), ("Place", {"target": "sink"})],
+        objects=["mug"],
+    )
+    task.scene.name = "kitchen"
+    adapter = ArenaAdapter(task, mode="mock")
+    args = adapter._map_primitives_to_arena_env(task)
+    assert args["environment"] == "kitchen_pick_and_place"
+    assert args["object"] == "mug"
+
+
 def test_unknown_object_falls_back_to_dex_cube() -> None:
     task = _task_with_primitives("pick_knife", [("Pick", {"target": "knife"})], objects=["knife"])
     adapter = ArenaAdapter(task, mode="mock")

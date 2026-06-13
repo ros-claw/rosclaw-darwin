@@ -1125,12 +1125,25 @@ class ArenaAdapter(BaseEnvironmentAdapter):
 
     def _map_primitives_to_arena_env(self, task: Task) -> dict[str, Any]:
         """Map ROSClaw primitives to a valid IsaacLab-Arena example environment."""
-        primitive_names = {p.name for p in task.primitives}
+        primitive_names = {p.name.lower() for p in task.primitives}
         # Pick a representative object name and map it to Arena asset registry.
         raw_obj = task.objects[0].name if task.objects else "object"
         mapped_obj = _ArenaComponentMapper._OBJECT_MAP.get(raw_obj, raw_obj)
         if mapped_obj == "object" or mapped_obj not in _ArenaComponentMapper._LOCAL_ARENA_OBJECTS:
             mapped_obj = "dex_cube"
+
+        scene_name = _ArenaComponentMapper._SCENE_MAP.get(
+            (task.scene.name or task.scene.domain or "default").lower(), "procedural_table"
+        )
+
+        # Kitchen tasks: use the kitchen_pick_and_place example environment when
+        # the scene is a kitchen and the primitives involve manipulation.
+        if scene_name == "kitchen" and primitive_names & {"pick", "place", "open", "close"}:
+            return {
+                "environment": "kitchen_pick_and_place",
+                "object": mapped_obj,
+                "embodiment": "franka_joint_pos",
+            }
 
         # Defaults if no specific environment is matched.
         env_args: dict[str, Any] = {
@@ -1139,7 +1152,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             "embodiment": _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot),
         }
 
-        if "Sort" in primitive_names:
+        if "sort" in primitive_names:
             return {
                 "environment": "tabletop_sort_cubes",
                 "objects": ["red_cube", "green_cube"],
@@ -1148,28 +1161,28 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 "embodiment": "franka_ik",
             }
 
-        if "Press" in primitive_names:
+        if "press" in primitive_names:
             return {
                 "environment": "press_button",
                 "object": "coffee_machine",
                 "embodiment": "franka_ik",
             }
 
-        if primitive_names & {"Open", "Close"}:
+        if primitive_names & {"open", "close"}:
             return {
                 "environment": "lift_object",
                 "object": mapped_obj if mapped_obj != "object" else "dex_cube",
                 "embodiment": "franka_joint_pos",
             }
 
-        if "Pick" in primitive_names or "Place" in primitive_names:
+        if primitive_names & {"pick", "place"}:
             return {
                 "environment": "lift_object",
                 "object": mapped_obj if mapped_obj != "object" else "dex_cube",
                 "embodiment": "franka_joint_pos",
             }
 
-        if "Lift" in primitive_names:
+        if "lift" in primitive_names:
             return {
                 "environment": "lift_object",
                 "object": mapped_obj if mapped_obj != "object" else "dex_cube",

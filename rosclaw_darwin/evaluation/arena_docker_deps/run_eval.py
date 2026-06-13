@@ -6,6 +6,29 @@ if "--headless" not in sys.argv:
 sys.path.insert(0, "/workspace/data")
 import lightwheel_patch
 
+# Standardize xform ops on any xformable prim before validation so that object
+# references to Mesh prims (e.g. kitchen Counter_Top_A) do not fail the
+# "standard transform operations" check during scene construction.
+try:
+    import isaaclab.sim.utils as _sim_utils
+
+    _orig_validate_standard_xform_ops = _sim_utils.validate_standard_xform_ops
+
+    def _patched_validate_standard_xform_ops(prim):
+        from pxr import UsdGeom
+
+        if not prim.IsA(UsdGeom.Xformable):
+            return False
+        try:
+            _sim_utils.standardize_xform_ops(prim)
+        except Exception:
+            pass
+        return True
+
+    _sim_utils.validate_standard_xform_ops = _patched_validate_standard_xform_ops
+except Exception:
+    pass
+
 # Monkey-patch wp.to_torch for OmniWarp 1.12.0 + PyTorch 2.7 compatibility.
 try:
     import warp as wp

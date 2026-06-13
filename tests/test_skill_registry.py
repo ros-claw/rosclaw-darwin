@@ -31,6 +31,31 @@ class TestSkillRegistry:
         assert registry.add(good_skill)
         assert registry.exists("fp_open")
 
+    def test_persistence_round_trip(self, tmp_path):
+        path = tmp_path / "skills.json"
+        registry = SkillRegistry(config={"path": str(path), "min_task_count": 1})
+        skill = SkillCandidate(
+            id="pick_1", name="pick",
+            action_pattern=["approach", "grasp", "lift"],
+            affordances=["graspable"],
+            source_task_ids=["task_1"],
+            evidence={"success_gain": 0.2},
+            fingerprint="fp_pick",
+        )
+        registry.add(skill)
+
+        registry2 = SkillRegistry(config={"path": str(path), "min_task_count": 1})
+        assert registry2.exists("fp_pick")
+        assert registry2.query_for_task(
+            Task(
+                id="t", name="T",
+                scene=SceneSpec(name="kitchen"),
+                embodiment=EmbodimentSpec(robot="franka"),
+                primitives=[Primitive(name="pick")],
+                objects=[ObjectSpec(name="cube", affordances=["graspable"])],
+            )
+        )
+
     def test_extract_from_task(self):
         task = Task(
             id="task_open", name="Open",
