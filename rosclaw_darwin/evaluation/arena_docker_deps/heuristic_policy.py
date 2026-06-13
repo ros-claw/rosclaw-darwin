@@ -13,11 +13,13 @@ from isaaclab_arena.policy.policy_base import PolicyBase
 
 @dataclass
 class HeuristicLiftPolicyArgs:
-    """Configuration for HeuristicLiftPolicy (no hyperparameters)."""
+    """Configuration for HeuristicLiftPolicy."""
+
+    skill_hints: list[str] | None = None
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicLiftPolicyArgs":
-        return cls()
+        return cls(skill_hints=getattr(args, "skill_hints", None))
 
 
 class HeuristicLiftPolicy(PolicyBase):
@@ -35,6 +37,19 @@ class HeuristicLiftPolicy(PolicyBase):
     def __init__(self, config: HeuristicLiftPolicyArgs):
         super().__init__(config)
         self._step = 0
+        self._skill_hints = set((config.skill_hints or []))
+        # Skill hints adapt the heuristic parameters.
+        self._delta_z = 0.04
+        self._descent_steps = 30
+        self._gripper_close_steps = 10
+        self._lift_steps = 40
+        if "efficient_execution" in self._skill_hints:
+            self._delta_z *= 1.5
+        if "grasp_adjust" in self._skill_hints:
+            self._gripper_close_steps += 5
+        if "adaptive_skill" in self._skill_hints:
+            self._descent_steps = max(10, self._descent_steps - 5)
+            self._lift_steps += 10
 
     def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
         device = torch.device(env.unwrapped.device)
@@ -43,18 +58,30 @@ class HeuristicLiftPolicy(PolicyBase):
         step = self._step
         self._step += 1
 
-        # Delta per step (will be multiplied by scale=0.5 inside controller)
-        delta_z = 0.04
+        # Log skill hint consumption once for observability.
+        if step == 0 and self._skill_hints:
+            import sys
+            print(f"[HEURISTIC_SKILL_HINTS] consumed: {sorted(self._skill_hints)}", file=sys.stderr)
+            print(f"[HEURISTIC_SKILL_HINTS] params: delta_z={self._delta_z:.4f} "
+                  f"descent={self._descent_steps} close={self._gripper_close_steps} lift={self._lift_steps}", file=sys.stderr)
+            sys.stderr.flush()
 
-        if step < 30:
+        # Delta per step (will be multiplied by scale=0.5 inside controller)
+        delta_z = self._delta_z
+
+        descent_end = self._descent_steps
+        close_end = descent_end + self._gripper_close_steps
+        lift_end = close_end + self._lift_steps
+
+        if step < descent_end:
             # Phase 1: descend toward object
             action[..., 2] = -delta_z
             action[..., -1] = 1.0   # gripper open
-        elif step < 40:
+        elif step < close_end:
             # Phase 2: close gripper at object height
             action[..., 2] = 0.0
             action[..., -1] = -1.0  # gripper close
-        elif step < 80:
+        elif step < lift_end:
             # Phase 3: lift up
             action[..., 2] = delta_z
             action[..., -1] = -1.0  # gripper close

@@ -1,0 +1,7 @@
+policy_id: heuristic_suite
+# Generic non-zero heuristic policy for mixed-task suite runs.
+# In mock mode this raises the simulated success probability.
+# In Arena docker mode it maps to heuristic_policy.HeuristicLiftPolicy.
+type: heuristic_lift
+strength: 0.7
+memory_bonus: 0.0

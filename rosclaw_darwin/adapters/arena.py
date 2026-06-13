@@ -994,6 +994,12 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "isaaclab_arena.policy.torchscript_action_policy.TorchScriptActionPolicy"
             if policy_type == "onnx_wbc":
                 policy_type = "isaaclab_arena.policy.onnx_wbc_action_policy.OnnxWbcActionPolicy"
+            # Forward skill hints into the policy's config dict so Arena-side
+            # heuristic policies can consume them.
+            policy_config_dict = {
+                **policy_config.get("policy_config_dict", {}),
+                "skill_hints": policy_config.get("skill_hints", []),
+            }
             # For heuristic policies use step-based rollout so we can observe
             # behaviour across multiple steps even if episodes end early.
             if policy_type == "heuristic_policy.HeuristicLiftPolicy":
@@ -1002,7 +1008,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                     "arena_env_args": arena_env_args,
                     "num_steps": 200,
                     "policy_type": policy_type,
-                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "policy_config_dict": policy_config_dict,
                     "headless": self.headless,
                     "timeout_seconds": 1200,
                 }
@@ -1012,7 +1018,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                     "arena_env_args": arena_env_args,
                     "num_episodes": eps,
                     "policy_type": policy_type,
-                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "policy_config_dict": policy_config_dict,
                     "headless": self.headless,
                     "timeout_seconds": 1200,
                 }
@@ -1022,7 +1028,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                     "arena_env_args": arena_env_args,
                     "num_steps": self.task.eval.max_steps or 50,
                     "policy_type": policy_type,
-                    "policy_config_dict": policy_config.get("policy_config_dict", {}),
+                    "policy_config_dict": policy_config_dict,
                     "headless": self.headless,
                     "timeout_seconds": 3600,
                 }
@@ -1136,9 +1142,17 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             (task.scene.name or task.scene.domain or "default").lower(), "procedural_table"
         )
 
-        # Kitchen tasks: use the kitchen_pick_and_place example environment when
+        # Kitchen tasks: use dedicated kitchen example environments when
         # the scene is a kitchen and the primitives involve manipulation.
         if scene_name == "kitchen" and primitive_names & {"pick", "place", "open", "close"}:
+            # Sequential put-and-close task (place object + close door) maps to
+            # Arena's composite example environment.
+            if "place" in primitive_names and "close" in primitive_names:
+                return {
+                    "environment": "franka_put_and_close_door",
+                    "object": mapped_obj,
+                    "embodiment": _ArenaComponentMapper._ROBOT_MAP.get(self.robot, self.robot),
+                }
             return {
                 "environment": "kitchen_pick_and_place",
                 "object": mapped_obj,

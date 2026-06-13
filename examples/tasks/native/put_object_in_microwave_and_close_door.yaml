@@ -1,0 +1,49 @@
+id: darwin_mvp_21_put_object_in_microwave_and_close_door
+name: Put Object in Microwave and Close Door
+description: Pick an object, place it inside the microwave, and close the microwave door.
+source: native
+domain: kitchen
+horizon: long
+
+scene:
+  name: kitchen
+  domain: kitchen
+
+embodiment:
+  robot: franka
+  control_mode: ik
+
+objects:
+  - name: cube
+    affordances: [graspable]
+  - name: microwave
+    affordances: [openable, container]
+
+primitives:
+  - name: pick
+  - name: place
+  - name: close
+
+eval:
+  success_conditions:
+    - object_inside_microwave
+    - door_closed
+  failure_conditions:
+    - timeout
+  metrics:
+    - success_rate
+    - completion_time
+  max_steps: 1000
+  max_episodes: 20
+
+mutation:
+  allowed:
+    - spatial
+    - object
+    - constraint
+  difficulty: 1
+
+tags:
+  - mvp
+  - kitchen
+  - sequential
