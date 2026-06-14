@@ -5,20 +5,33 @@
 {% if ablations %}
 <div class="card">
   <table>
-    <tr><th>Task</th><th>ΔSR without hints</th><th>ΔSR with auto hints</th><th>Skill transfer gain</th><th>Without run</th><th>With run</th></tr>
+    <tr>
+      <th>Source</th>
+      <th>Task</th>
+      <th>Policy</th>
+      <th>Episodes/cond</th>
+      <th>no hint SR</th>
+      <th>manual SR</th>
+      <th>auto SR</th>
+      <th>auto hint names</th>
+      <th>ΔSR (auto)</th>
+    </tr>
     {% for a in ablations %}
     <tr>
+      <td><code>{{ a.source }}</code></td>
       <td><code>{{ a.task_id }}</code></td>
+      <td><code>{{ a.policy_id }}</code></td>
+      <td>{{ a.episodes or '-' }}</td>
       <td class="metric">{{ "%.3f"|format(a.without_hints_sr) }}</td>
+      <td class="metric">{{ "%.3f"|format(a.manual_hints_sr) }}</td>
       <td class="metric">{{ "%.3f"|format(a.with_auto_hints_sr) }}</td>
-      <td class="metric">{{ "%.3f"|format(a.skill_transfer_gain) }}</td>
-      <td><code>{{ a.without_run_id or '-' }}</code></td>
-      <td><code>{{ a.with_run_id or '-' }}</code></td>
+      <td><code>{{ ', '.join(a.auto_hint_names or []) }}</code></td>
+      <td class="metric">{{ "%+.3f"|format(a.skill_transfer_gain) }}</td>
     </tr>
     {% endfor %}
   </table>
 </div>
 {% else %}
-<div class="card"><p>No ablation pairs found. Run evolutions with and without <code>--auto-skill-hints</code> for the same task.</p></div>
+<div class="card"><p>No ablation pairs found. Run evolutions with and without <code>--auto-skill-hints</code>, or run <code>scripts/ablations/run_lift_skill_hint_ablation.py</code>.</p></div>
 {% endif %}
 {% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Horizon Sweep - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🌅 Horizon Sweep Diagnostics</h1></div>
+{% if sweeps %}
+{% for sweep in sweeps %}
+<div class="card">
+  <h2>{{ sweep.task_id }} / {{ sweep.policy_id }}</h2>
+  <p>
+    steps: <code>{{ sweep.steps_list|join(', ') }}</code> |
+    rollouts/step: {{ sweep.episodes_per_step }} |
+    comparable to official benchmark: <strong>{{ sweep.comparable_to_official }}</strong>
+  </p>
+  <table>
+    <tr>
+      <th>steps</th>
+      <th>success_rate</th>
+      <th>progress</th>
+      <th>eef_min ↓</th>
+      <th>eef_final ↓</th>
+      <th>obj_height_max ↑</th>
+      <th>obj_height_delta ↑</th>
+      <th>dominant failure</th>
+    </tr>
+    {% for group in sweep.groups %}
+    <tr>
+      <td>{{ group.steps }}</td>
+      <td class="metric">{{ "%.3f"|format(group.success_rate_mean or 0.0) }}</td>
+      <td class="metric">{{ "%.3f"|format(group.progress_mean or 0.0) }}</td>
+      <td class="metric">{{ "%.4f"|format(group.eef_to_object_distance_min_mean or 0.0) }}</td>
+      <td class="metric">{{ "%.4f"|format(group.eef_to_object_distance_final_mean or 0.0) }}</td>
+      <td class="metric">{{ "%.4f"|format(group.object_height_max_mean or 0.0) }}</td>
+      <td class="metric">{{ "%.4f"|format(group.object_height_delta_mean or 0.0) }}</td>
+      <td><code>{{ group.failure_counts.keys()|list|first if group.failure_counts else 'n/a' }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p>No horizon sweeps found. Run <code>scripts/diagnostics/run_lift_horizon_sweep.py</code>.</p></div>
+{% endif %}
+{% endblock %}

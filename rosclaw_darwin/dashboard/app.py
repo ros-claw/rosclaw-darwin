@@ -98,6 +98,18 @@ class DashboardApp:
                 "ablations": self._load_ablations(),
             })
 
+        @self.app.get("/lift-progress", response_class=HTMLResponse)
+        async def lift_progress_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "lift_progress.html", {
+                "runs": self._load_progress_runs(),
+            })
+
+        @self.app.get("/diagnostics/horizon-sweep", response_class=HTMLResponse)
+        async def horizon_sweep_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "horizon_sweep.html", {
+                "sweeps": self._load_horizon_sweeps(),
+            })
+
         @self.app.get("/leaderboard", response_class=HTMLResponse)
         async def leaderboard_page(request: Request) -> Any:
             entries = self._load_leaderboard()
@@ -353,6 +365,130 @@ class DashboardApp:
                 "without_hints_sr": without_metrics.get("delta_success_rate", 0.0),
                 "with_auto_hints_sr": with_metrics.get("delta_success_rate", 0.0),
                 "skill_transfer_gain": with_metrics.get("skill_transfer_gain", 0.0),
+                "without_run_id": without.get("run_id"),
+                "with_run_id": with_auto.get("run_id"),
+            })
+        return ablations
+
+    def _data_search_paths(self) -> list[Path]:
+        """Return directories that may contain Darwin run artifacts."""
+        paths = [self.data_dir, Path("/tmp/rosclaw_data")]
+        return [p for p in paths if p.exists()]
+
+    def _find_run_json_files(self) -> list[Path]:
+        """Search common output directories for run.json files."""
+        found: list[Path] = []
+        for base in self._data_search_paths():
+            for pattern in (
+                "runs/*/run.json",
+                "evolution_runs/*/run.json",
+                "ablations/*/*/run.json",
+                "diagnostics/*/*/run.json",
+            ):
+                found.extend(base.glob(pattern))
+        return found
+
+    def _load_progress_runs(self) -> list[dict[str, Any]]:
+        """Load runs that contain per-episode progress metrics."""
+        runs: list[dict[str, Any]] = []
+        for path in self._find_run_json_files():
+            try:
+                data = json.loads(path.read_text())
+                arena_output = data.get("metadata", {}).get("arena_metrics_output", {})
+                episode_metrics = arena_output.get("episode_metrics")
+                if not episode_metrics:
+                    continue
+                runs.append({
+                    "run_id": data.get("run_id"),
+                    "task_id": data.get("task_id"),
+                    "policy_id": data.get("policy_id"),
+                    "status": data.get("status"),
+                    "metric_scope": data.get("metric_scope"),
+                    "claim_level": data.get("claim_level"),
+                    "leaderboard_excluded": data.get("leaderboard_excluded"),
+                    "success_rate": arena_output.get("success_rate"),
+                    "progress_mean": arena_output.get("progress_mean"),
+                    "failure_counts": arena_output.get("failure_counts", {}),
+                    "num_episodes": arena_output.get("num_episodes", len(episode_metrics)),
+                    "path": str(path),
+                    "episode_metrics": episode_metrics,
+                })
+            except Exception:
+                continue
+        return runs
+
+    def _load_horizon_sweeps(self) -> list[dict[str, Any]]:
+        """Load horizon sweep summaries from diagnostics output directories."""
+        sweeps: list[dict[str, Any]] = []
+        for base in self._data_search_paths():
+            for path in base.glob("diagnostics/*/summary.json"):
+                try:
+                    data = json.loads(path.read_text())
+                    if "groups" in data and "sweep_id" in data:
+                        sweeps.append({**data, "path": str(path)})
+                except Exception:
+                    continue
+        return sweeps
+
+    def _load_ablations(self) -> list[dict[str, Any]]:
+        """Load ablation evidence from both evolution runs and ablation scripts."""
+        ablations: list[dict[str, Any]] = []
+
+        # Source 1: dedicated ablation summaries written by scripts/ablations/*.
+        for base in self._data_search_paths():
+            for path in base.glob("ablations/*/summary.json"):
+                try:
+                    data = json.loads(path.read_text())
+                    without = data.get("without_hints", {})
+                    manual = data.get("manual_hints", {})
+                    auto = data.get("auto_hints", {})
+                    ablations.append({
+                        "source": "ablation_script",
+                        "task_id": data.get("task_id"),
+                        "policy_id": data.get("policy_id"),
+                        "episodes": data.get("episodes"),
+                        "without_hints_sr": without.get("success_rate", 0.0),
+                        "without_hints_progress": without.get("progress", 0.0),
+                        "manual_hints_sr": manual.get("success_rate", 0.0),
+                        "manual_hints_progress": manual.get("progress", 0.0),
+                        "with_auto_hints_sr": auto.get("success_rate", 0.0),
+                        "with_auto_hints_progress": auto.get("progress", 0.0),
+                        "skill_transfer_gain": data.get("transfer_gain", {}).get("auto", {}).get("transfer_gain_success", 0.0),
+                        "auto_hint_names": auto.get("generated_hint_names", []),
+                        "path": str(path),
+                        "without_run_id": without.get("run_id"),
+                        "with_run_id": auto.get("run_id"),
+                    })
+                except Exception:
+                    continue
+
+        # Source 2: evolution runs grouped by task_id.
+        by_task: dict[str, dict[str, dict]] = {}
+        for evo in self._load_evolution_runs():
+            task_id = evo.get("task_id")
+            hint_source = evo.get("hint_source", {})
+            key = "with_auto_hints" if hint_source.get("auto") else "without_hints"
+            by_task.setdefault(task_id, {})[key] = evo
+
+        for task_id, variants in by_task.items():
+            without = variants.get("without_hints", {})
+            with_auto = variants.get("with_auto_hints", {})
+            without_metrics = without.get("evolution_metrics", {})
+            with_metrics = with_auto.get("evolution_metrics", {})
+            ablations.append({
+                "source": "evolution_runner",
+                "task_id": task_id,
+                "policy_id": with_auto.get("policy_id") or without.get("policy_id"),
+                "episodes": None,
+                "without_hints_sr": without_metrics.get("delta_success_rate", 0.0),
+                "without_hints_progress": 0.0,
+                "manual_hints_sr": 0.0,
+                "manual_hints_progress": 0.0,
+                "with_auto_hints_sr": with_metrics.get("delta_success_rate", 0.0),
+                "with_auto_hints_progress": 0.0,
+                "skill_transfer_gain": with_metrics.get("skill_transfer_gain", 0.0),
+                "auto_hint_names": [h.get("name") for h in with_auto.get("hint_source", {}).get("auto", [])],
+                "path": None,
                 "without_run_id": without.get("run_id"),
                 "with_run_id": with_auto.get("run_id"),
             })

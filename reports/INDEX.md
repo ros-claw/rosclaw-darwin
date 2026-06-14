@@ -18,6 +18,7 @@
 
 - [Skill Hint Progress Ablation Report](SKILL_HINT_PROGRESS_ABLATION_REPORT.md) — with/without/auto hint comparison and transfer gain.
 - [Real Arena Evolution Evidence Report](REAL_ARENA_EVOLUTION_EVIDENCE_REPORT.md) — large-N follow-up of the closed-loop failure-to-hint pipeline.
+- [Final Next Stage Report](FINAL_NEXT_STAGE_REPORT.md) — step-by-step status against the implementation outline and remaining work.
 
 ## Historical
 
