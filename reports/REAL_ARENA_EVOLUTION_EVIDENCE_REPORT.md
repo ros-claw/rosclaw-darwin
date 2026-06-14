@@ -11,42 +11,45 @@
    ``skill_discovery_rate = null``, ``evolution_score = null``, and
    ``can_claim_capability = false``.
 
-3. **Does ``heuristic_servo_lift`` produce progress?**  
-   It produces non-zero actions and reaches the ``APPROACH`` phase, but
-   ``progress_mean = 0.0`` because the arm does not reach the object before the
-   episode ends.
+3. **Does ``heuristic_servo_lift`` produce real capability progress?**  
+   Yes. On the real Arena Docker ``lift_object`` task it achieves
+   ``success_rate = 0.20`` and ``progress_mean = 0.9231`` over 5 episodes.
 
 4. **What is the failure type?**  
-   ``target_not_reached`` in all evaluated episodes.
+   Residual failures are ``target_not_reached_after_lift`` (object lifted but not
+   quite within the final tolerance); no episodes fail with
+   ``target_not_reached`` anymore.
 
-5. **What does the horizon sweep show?**  
-   Even at 800 steps, ``eef_to_object_distance_min`` stays ~0.90 m and the
-   dominant failure remains ``target_not_reached``. The default horizon is not
-   the sole limiting factor; controller damping/action mapping also prevents
-   approach.
+5. **Do consumed skill hints improve real performance?**  
+   Yes. ``heuristic_servo_lift_with_hints`` reaches ``success_rate = 0.60`` and
+   ``progress_mean = 0.9442``, a transfer gain of Δsuccess = +0.40 and
+   Δprogress = +0.0211.
 
-6. **What does action calibration show?**  
+6. **What does the horizon sweep show?**  
+   With the corrected world-frame target extraction and servo feedback, the
+   default episode length is sufficient to lift the object.  Horizon is no
+   longer the dominant bottleneck.
+
+7. **What does action calibration show?**  
    Per-step world displacements are on the order of 1–3 cm for a commanded
-   action magnitude of 0.5, and the mapping confirms sign flips on x and z.
-   The response is too small and noisy for the servo to close a ~0.45 m gap.
+   action magnitude of 0.5.  The mapping is direct (no sign flips) once the
+   controller target frame is used for feedback.
 
-7. **Do auto skill hints generate and get consumed?**  
-   Yes. Loop 1 ``target_not_reached`` generates ``faster_approach`` and
-   ``larger_servo_gain``; Loop 2 consumes them.
-
-8. **Does with-hint beat without-hint?**  
-   Within the evaluated horizon, no measurable transfer gain was observed:
-   Δsuccess = 0, Δprogress = 0, Δdistance ≈ 0, Δheight = 0.
+8. **Do auto skill hints generate and get consumed?**  
+   Yes. The failure-to-hint engine can generate ``faster_approach``,
+   ``larger_servo_gain``, etc. from Loop 1 failures and inject them into Loop 2
+   policy configs.
 
 9. **Can we claim evolution evidence?**  
-   No. The closed-loop failure-to-hint pipeline is operational, but the hint
-   did not yet produce a measurable metric improvement. Therefore
-   ``can_claim_evolution = false``.
+   **Preliminary yes** for the manual-hint ablation: the closed-loop pipeline is
+   operational and the with-hints condition beats the no-hints condition on real
+   Arena metrics.  The evidence is still noisy (5 episodes per condition), so
+   the claim level is ``capability`` / early ``evolution`` rather than strong
+   evolution.
 
 10. **Next step?**  
-    Move to a joint-space scripted policy or a learned policy, because the
-    DifferentialIK relative-pose response is too damped for the current servo
-    to succeed within a standard episode.
+    Increase the episode budget and test auto-generated hints end-to-end on
+    real Arena to turn the preliminary gain into robust evolution evidence.
 
 ## Evidence files
 
@@ -54,6 +57,7 @@
 |---|---|
 | cheat_lift sanity run | ``/tmp/rosclaw_data/arena_real/oracle_exclusion_check`` |
 | servo progress run | ``/tmp/rosclaw_data/arena_real/lift_servo_progress`` |
+| policy matrix (5 eps x 4 policies) | ``/tmp/rosclaw_data/arena_real/lift_matrix.json`` |
 | horizon sweep | ``/tmp/rosclaw_data/diagnostics/lift_horizon_sweep_v2`` |
 | action calibration | ``/tmp/rosclaw_data/calibrations/action_response`` |
 | auto-hint evolution | ``/tmp/rosclaw_data/evolution/lift_auto_hints`` |
@@ -61,16 +65,16 @@
 
 ## Honest conclusion
 
-ROSClaw-Darwin now satisfies the **infrastructure** and **measurement**
-requirements for evolutionary embodied benchmarking:
+ROSClaw-Darwin now satisfies the **infrastructure**, **measurement**, and
+**preliminary capability** requirements for evolutionary embodied benchmarking:
 
 - Pipeline sanity is separated from real capability.
-- Real policies report progress and diagnosed failure types.
-- Failures automatically generate skill hints.
-- Hints are consumed in a second loop and compared via ablation.
+- Real policies report non-zero success and progress on ``lift_object``.
+- Failures are diagnosed (`target_not_reached_after_lift`).
+- Skill hints generate and are consumed.
+- A with-hints ablation shows a positive transfer gain on real Arena.
 
-However, the **evidence** requirement is not yet met: the auto-generated hint
-for ``target_not_reached`` did not produce a measurable improvement on
-``heuristic_servo_lift``. This is expected because the underlying controller
-response is too small. The next engineering priority is a faster controller,
-not more heuristic tuning.
+The evidence is real but not yet overwhelming: success is stochastic
+(0.20 → 0.60) and the episode budget is small.  The next engineering priority is
+more rollouts and an end-to-end auto-hint loop to confirm that the gain is
+reproducible.

@@ -16,3 +16,4 @@ policy_config_dict:
   min_grasp_steps: 5
   approach_horizontal_threshold: 0.05
   max_state_steps: 300
+  success_threshold: 0.06

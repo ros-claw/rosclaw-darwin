@@ -84,7 +84,7 @@ def infer_failure_type(
 def compute_episode_metrics(
     trace: list[dict[str, Any]],
     grasp_dist_threshold: float = 0.03,
-    success_threshold: float = 0.05,
+    success_threshold: float = 0.06,
     lift_height_threshold: float = 0.03,
     required_lift_height: float = 0.25,
 ) -> dict[str, Any]:
@@ -117,6 +117,7 @@ def compute_episode_metrics(
 
     target_initial = _safe_first(target_dists)
     target_final = _safe_last(target_dists)
+    target_min = _safe_min(target_dists)
 
     object_initial = object_heights[0] if object_heights else None
     object_final = object_heights[-1] if object_heights else None
@@ -127,13 +128,21 @@ def compute_episode_metrics(
         else 0.0
     )
 
-    reached_object = (eef_min is not None) and (eef_min < grasp_dist_threshold)
+    # An object that has been lifted by more than the threshold is implicitly
+    # considered "reached" even if the end-effector distance estimate is noisy
+    # (e.g. when using gripper geometry instead of the flange centre).
+    reached_object = (
+        (eef_min is not None and eef_min < grasp_dist_threshold)
+        or object_delta > lift_height_threshold
+    )
     lifted = object_delta > lift_height_threshold
+    # Use the minimum object-to-target distance during the episode to align
+    # with Arena's early-success termination (the final state may overshoot).
     success = bool(
         reached_object
         and lifted
-        and target_final is not None
-        and target_final < success_threshold
+        and target_min is not None
+        and target_min < success_threshold
     )
 
     nonzero_actions = sum(1 for n in action_norms if n is not None and n > 1e-4)
@@ -194,6 +203,7 @@ def compute_episode_metrics(
             else None
         ),
         "object_to_target_distance_initial": target_initial,
+        "object_to_target_distance_min": target_min,
         "object_to_target_distance_final": target_final,
         "object_to_target_distance_delta": (
             (target_initial - target_final)

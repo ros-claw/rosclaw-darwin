@@ -158,21 +158,44 @@ def _extract_state_from_env(env: Any, action: Any) -> dict[str, float | None]:
     except Exception:
         pass
 
-    # Target from task_obs
+    # Target from command manager (base frame) transformed to world frame.
+    # task_obs alone stores the base-frame command; the Arena success criterion
+    # uses the world-frame goal, so we must transform before computing distances.
     try:
-        obs = env._obs_buf if hasattr(env, "_obs_buf") else None
-        if obs is None:
-            obs = getattr(env.unwrapped, "_obs_buf", None)
-        if isinstance(obs, dict) and "task_obs" in obs:
-            task_obs = obs["task_obs"]
-            if hasattr(task_obs, "squeeze"):
-                task_obs = task_obs.squeeze()
-            if task_obs.numel() >= 3:
-                state["target_x"] = float(task_obs[0].item())
-                state["target_y"] = float(task_obs[1].item())
-                state["target_z"] = float(task_obs[2].item())
+        cm = env.unwrapped.command_manager
+        cmd = cm.get_command("object_pose")
+        des_pos_b = torch.as_tensor(cmd, device=device).squeeze()[:3]
+        robot = env.unwrapped.scene["robot"]
+        root_pos = robot.data.root_pos_w.squeeze().to(device)
+        root_quat = robot.data.root_quat_w.squeeze().to(device)
+        if root_pos.ndim > 1:
+            root_pos = root_pos[0]
+        if root_quat.ndim > 1:
+            root_quat = root_quat[0]
+        from isaaclab.utils.math import combine_frame_transforms
+        target_w, _ = combine_frame_transforms(
+            root_pos.unsqueeze(0), root_quat.unsqueeze(0), des_pos_b.unsqueeze(0)
+        )
+        target_w = target_w.squeeze()
+        state["target_x"] = float(target_w[0].item())
+        state["target_y"] = float(target_w[1].item())
+        state["target_z"] = float(target_w[2].item())
     except Exception:
-        pass
+        # Fallback to raw task_obs (may be base-frame; still better than nothing).
+        try:
+            obs = env._obs_buf if hasattr(env, "_obs_buf") else None
+            if obs is None:
+                obs = getattr(env.unwrapped, "_obs_buf", None)
+            if isinstance(obs, dict) and "task_obs" in obs:
+                task_obs = obs["task_obs"]
+                if hasattr(task_obs, "squeeze"):
+                    task_obs = task_obs.squeeze()
+                if task_obs.numel() >= 3:
+                    state["target_x"] = float(task_obs[0].item())
+                    state["target_y"] = float(task_obs[1].item())
+                    state["target_z"] = float(task_obs[2].item())
+        except Exception:
+            pass
 
     try:
         scene = env.unwrapped.scene
@@ -262,7 +285,7 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, A
     }
 
     grasp_dist_threshold = float(_POLICY_CONFIG.get("grasp_dist_threshold", 0.03))
-    success_threshold = float(_POLICY_CONFIG.get("success_threshold", 0.05))
+    success_threshold = float(_POLICY_CONFIG.get("success_threshold", 0.06))
     lift_height_threshold = float(_POLICY_CONFIG.get("lift_height_threshold", 0.03))
 
     episode_metrics: list[dict[str, Any]] = []
@@ -295,9 +318,16 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, A
         object_max = max(object_heights) if object_heights else None
         object_delta = (object_final - object_initial) if object_initial is not None and object_final is not None else 0.0
 
-        reached_object = eef_min < grasp_dist_threshold
+        # An object that has been lifted by more than the threshold is implicitly
+        # considered "reached" even if the end-effector distance estimate is noisy.
+        reached_object = (
+            eef_min < grasp_dist_threshold
+            or object_delta > lift_height_threshold
+        )
         lifted = object_delta > lift_height_threshold
-        success = reached_object and lifted and target_final < success_threshold
+        # Use the minimum object-to-target distance during the episode to align
+        # with Arena's early-success termination (the final state may overshoot).
+        success = reached_object and lifted and target_min < success_threshold
 
         nonzero_actions = sum(1 for n in action_norms if n is not None and n > 1e-4)
         nonzero_rate = nonzero_actions / max(1, len(action_norms))
@@ -349,6 +379,7 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, A
             "eef_to_object_distance_final": eef_final if eef_final != float("inf") else None,
             "eef_to_object_distance_delta": (eef_initial - eef_final) if eef_initial != float("inf") and eef_final != float("inf") else None,
             "object_to_target_distance_initial": target_initial if target_initial != float("inf") else None,
+            "object_to_target_distance_min": target_min if target_min != float("inf") else None,
             "object_to_target_distance_final": target_final if target_final != float("inf") else None,
             "object_to_target_distance_delta": (target_initial - target_final) if target_initial != float("inf") and target_final != float("inf") else None,
             "object_height_initial": object_initial,

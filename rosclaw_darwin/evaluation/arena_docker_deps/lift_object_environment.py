@@ -26,51 +26,43 @@ class LiftObjectEnvironment(ExampleEnvironmentBase):
         from isaaclab_arena.scene.scene import Scene
         from isaaclab_arena.tasks.lift_object_task import LiftObjectTaskRL
         from isaaclab_arena.utils.pose import Pose
-        from isaaclab_arena.assets.object import Object
-        from isaaclab_arena.assets.object_base import ObjectType
         import isaaclab.sim as sim_utils
-
-        # Create table as a static BASE asset with explicit box collision.
-        # Using ObjectType.BASE avoids IsaacLab's RigidObject kinematic bug in Isaac Sim 5.1.
-        table = Object(
-            name="table",
-            prim_path="{ENV_REGEX_NS}/table",
-            object_type=ObjectType.BASE,
-            spawner_cfg=sim_utils.CuboidCfg(
-                size=(0.8, 1.5, 0.04),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True, contact_offset=0.005),
-                visible=True,
-                physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.5, dynamic_friction=0.5),
-            ),
-            initial_pose=Pose(position_xyz=(0.5, 0, -0.02), rotation_xyzw=(0, 0, 0.707, 0.707)),
-        )
-        table.object_min_z = -0.05
 
         pick_up_object = self.asset_registry.get_asset_by_name(args_cli.object)()
 
-        # Add ground plane and light to the scene
+        # Use the registered ground_plane asset at table height as the collision
+        # surface. The procedural BASE/RIGID table variants did not provide
+        # reliable collision in this Isaac Sim 5.1 / Arena setup.
         ground_plane = self.asset_registry.get_asset_by_name("ground_plane")()
+        ground_plane.set_initial_pose(Pose(position_xyz=(0.0, 0.0, 0.0)))
+        # Tolerance for small penetrations during contact.
+        ground_plane.object_min_z = -0.1
         light = self.asset_registry.get_asset_by_name("light")()
 
-        assets = [table, pick_up_object, ground_plane, light]
+        assets = [pick_up_object, ground_plane, light]
 
         embodiment = self.asset_registry.get_asset_by_name(args_cli.embodiment)(concatenate_observation_terms=True)
+
+        # Start the arm closer to tabletop objects, matching the ROSClaw mapper.
+        if hasattr(embodiment, "set_initial_joint_pose"):
+            embodiment.set_initial_joint_pose(
+                [0.0, -0.569, 0.0, -2.81, 0.0, 3.037, 0.741, 0.04, 0.04]
+            )
 
         if args_cli.teleop_device is not None:
             teleop_device = self.device_registry.get_device_by_name(args_cli.teleop_device)()
         else:
             teleop_device = None
 
-        # Set all positions
-        pick_up_object.set_initial_pose(Pose(position_xyz=(0.5, 0, 0.055), rotation_xyzw=(0, 0, 0, 1)))
-        ground_plane.set_initial_pose(Pose(position_xyz=(0.0, 0.0, -1.05)))
+        # Place object above the ground plane (z=0.0).
+        pick_up_object.set_initial_pose(Pose(position_xyz=(0.5, 0.0, 0.055), rotation_xyzw=(0, 0, 0, 1)))
 
         # Compose the scene
         scene = Scene(assets=assets)
 
         task = LiftObjectTaskRL(
             pick_up_object,
-            table,
+            ground_plane,
             embodiment,
             minimum_height_to_lift=0.04,
             episode_length_s=5.0,
@@ -90,7 +82,7 @@ class LiftObjectEnvironment(ExampleEnvironmentBase):
         return isaaclab_arena_environment
 
     @staticmethod
-    def add_cli_args(parser: argparse.ArgumentParser) -> None:
+    def add_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser.add_argument("--object", type=str, default="dex_cube")
         parser.add_argument("--teleop_device", type=str, default=None)
         parser.add_argument("--embodiment", type=str, default="franka_joint_pos")

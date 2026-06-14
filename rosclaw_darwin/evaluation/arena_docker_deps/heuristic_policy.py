@@ -62,14 +62,15 @@ class HeuristicServoLiftPolicyArgs:
 
     skill_hints: list[str] | None = None
     approach_offset_z: float = 0.08
-    grasp_offset_z: float = 0.02
+    grasp_offset_z: float = 0.0
     lift_height: float = 0.25
     kp: float = 5.0
     grasp_dist_threshold: float = 0.03
-    gripper_close_threshold: float = 0.015
-    min_grasp_steps: int = 5
+    gripper_close_threshold: float = 0.03
+    min_grasp_steps: int = 15
     approach_horizontal_threshold: float = 0.05
     max_state_steps: int = 300
+    success_threshold: float = 0.05
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoLiftPolicyArgs":
@@ -196,6 +197,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._min_grasp_steps = config.min_grasp_steps
         self._approach_horizontal_threshold = config.approach_horizontal_threshold
         self._max_state_steps = config.max_state_steps
+        self._success_threshold = config.success_threshold
 
         if "efficient_execution" in self._skill_hints:
             self._kp *= 1.5
@@ -256,8 +258,10 @@ class HeuristicServoLiftPolicy(PolicyBase):
 
         elif self._state == "GRASP":
             action = self._set_gripper(action, open=False)
-            closed = gripper_pos is not None and gripper_pos < self._gripper_close_threshold
-            if self._state_step >= self._min_grasp_steps and closed:
+            # Transition once we have allowed enough steps for the fingers to close.
+            # Requiring a specific gripper joint position is fragile because the
+            # object itself keeps the fingers slightly open.
+            if self._state_step >= self._min_grasp_steps:
                 self._transition("LIFT")
 
         elif self._state == "LIFT":
@@ -268,7 +272,12 @@ class HeuristicServoLiftPolicy(PolicyBase):
                 target[2] += self._lift_height
             self._apply_position(action, eef_pos, eef_quat, target)
             action = self._set_gripper(action, open=False)
-            if eef_pos[2] >= target[2] - 0.03:
+            # Transition to HOLD when the object is close to the command target
+            # (or when the end-effector reaches a pure height target).
+            if target_pos is not None and object_pos is not None:
+                if torch.norm(target_pos - object_pos) < self._success_threshold:
+                    self._transition("HOLD")
+            elif eef_pos[2] >= target[2] - 0.03:
                 self._transition("HOLD")
 
         elif self._state == "HOLD":
@@ -300,6 +309,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
 
     def _infer_controller_mode(self, env: gym.Env) -> None:
         """Detect whether the arm controller expects relative deltas or absolute poses."""
+        action_dim = int(env.action_space.shape[-1]) if hasattr(env.action_space, "shape") else 0
         try:
             cfg = env.unwrapped.cfg
             arm = cfg.actions.arm_action
@@ -308,9 +318,17 @@ class HeuristicServoLiftPolicy(PolicyBase):
             if self._action_scale == 0.0:
                 self._action_scale = 1.0
         except Exception:
-            # Default to absolute-pose commands for mock/unit-test environments.
-            self._relative_mode = False
+            # Heuristic fallback: 7-dim action spaces are relative pose (DifferentialIK),
+            # 8-dim action spaces are absolute pose (joint pos / RMPflow absolute).
+            self._relative_mode = action_dim == 7
             self._action_scale = 1.0
+        import sys
+        print(
+            f"[SERVO_MODE] relative_mode={self._relative_mode} action_scale={self._action_scale} "
+            f"action_dim={action_dim}",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
 
     def _apply_position(
         self,
@@ -335,12 +353,9 @@ class HeuristicServoLiftPolicy(PolicyBase):
             #   [dx, dy, dz, droll, dpitch, dyaw]
             # followed by the gripper dim.
             body_delta = delta.clone()
-            # Empirical body-frame convention for the Franka panda_hand used by
-            # DifferentialInverseKinematicsActionCfg: x points backward relative
-            # to world x, y is aligned, and z points out of the gripper (opposite
-            # to world z when reaching downward).
-            body_delta[0] = -body_delta[0]
-            body_delta[2] = -body_delta[2]
+            # Live runs with the Arena DifferentialIK relative-pose controller show
+            # that world-frame deltas map directly to the action axes (no sign
+            # flips) when the controller is configured in relative mode.
             cmd = body_delta / self._action_scale
             action[..., :3] = torch.clamp(cmd, -1.0, 1.0)
             if action.shape[-1] >= 6:
@@ -378,39 +393,81 @@ class HeuristicServoLiftPolicy(PolicyBase):
         torch.Tensor | None,
         torch.Tensor | None,
     ]:
-        """Extract eef_pos, eef_quat, object_pos, gripper_pos, and target_pos."""
-        eef_pos, object_pos, gripper_pos = self._extract_obs(observation, device)
-        eef_quat = None
-        if isinstance(observation, dict):
-            pol = observation.get("policy", observation)
-            if isinstance(pol, dict):
-                eef_quat = self._to_tensor(pol.get("eef_quat"), device)
+        """Extract world-frame eef_pos, eef_quat, object_pos, gripper_pos, and target_pos."""
+        # Prefer scene data because it is always in the world frame. The policy
+        # observation terms may return object positions in the robot root frame,
+        # which would break the servo error if used directly.
+        eef_pos, eef_quat, object_pos, gripper_pos = self._extract_from_scene(env, device)
 
-        if eef_pos is None or object_pos is None or eef_quat is None:
-            eef_pos_s, eef_quat_s, object_pos_s, gripper_pos_s = self._extract_from_scene(env, device)
+        # Fallback to observation terms if scene extraction fails.
+        if eef_pos is None or object_pos is None or gripper_pos is None:
+            eef_pos_o, object_pos_o, gripper_pos_o = self._extract_obs(observation, device)
             if eef_pos is None:
-                eef_pos = eef_pos_s
-            if eef_quat is None:
-                eef_quat = eef_quat_s
+                eef_pos = eef_pos_o
             if object_pos is None:
-                object_pos = object_pos_s
+                object_pos = object_pos_o
             if gripper_pos is None:
-                gripper_pos = gripper_pos_s
+                gripper_pos = gripper_pos_o
 
-        target_pos = self._extract_target(observation, device)
+        target_pos = self._extract_target_world(observation, env, device)
         return eef_pos, eef_quat, object_pos, gripper_pos, target_pos
 
-    def _extract_target(self, observation: GymSpacesDict, device: torch.device) -> torch.Tensor | None:
-        """Read the command target position from ``task_obs`` (first 3 dims)."""
-        if not isinstance(observation, dict):
+    def _extract_target_world(
+        self, observation: GymSpacesDict, env: gym.Env, device: torch.device
+    ) -> torch.Tensor | None:
+        """Read the command target position and transform it to the world frame.
+
+        The command manager stores targets in the robot root frame; Arena's
+        success criterion compares object world position to the world-frame goal.
+        """
+        try:
+            cm = env.unwrapped.command_manager
+            cmd = cm.get_command("object_pose")
+            des_pos_b = torch.as_tensor(cmd, device=device).squeeze()[:3]
+            root_pos, root_quat = self._extract_robot_root(env, device)
+            if root_pos is not None and root_quat is not None:
+                from isaaclab.utils.math import combine_frame_transforms
+                target_w, _ = combine_frame_transforms(
+                    root_pos.unsqueeze(0), root_quat.unsqueeze(0), des_pos_b.unsqueeze(0)
+                )
+                return target_w.squeeze()
+        except Exception:
+            pass
+
+        # Fallback: task_obs stores the base-frame command; if the robot base is
+        # near the world origin this is a reasonable approximation.
+        try:
+            if not isinstance(observation, dict):
+                return None
+            task_obs = observation.get("task_obs")
+            if task_obs is None:
+                return None
+            t = self._to_tensor(task_obs, device)
+            if t is None or t.numel() < 3:
+                return None
+            return t[:3].squeeze()
+        except Exception:
             return None
-        task_obs = observation.get("task_obs")
-        if task_obs is None:
-            return None
-        t = self._to_tensor(task_obs, device)
-        if t is None or t.numel() < 3:
-            return None
-        return t[:3].squeeze()
+
+    def _extract_robot_root(
+        self, env: gym.Env, device: torch.device
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Return the robot root position/quaternion in world frame."""
+        try:
+            scene = getattr(env.unwrapped, "scene", None)
+            if scene is None:
+                return None, None
+            robot = scene["robot"]
+            data = robot.data
+            pos = data.root_pos_w.squeeze().to(device)
+            quat = data.root_quat_w.squeeze().to(device)
+            if pos.ndim > 1:
+                pos = pos[0]
+            if quat.ndim > 1:
+                quat = quat[0]
+            return pos, quat
+        except Exception:
+            return None, None
 
     def _extract_obs(
         self, observation: GymSpacesDict, device: torch.device
@@ -431,7 +488,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
     def _extract_from_scene(
         self, env: gym.Env, device: torch.device
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-        """Fallback to read eef/object/gripper data from the IsaacLab scene."""
+        """Read eef/object/gripper data from the IsaacLab scene (world frame)."""
         try:
             scene = getattr(env.unwrapped, "scene", None)
             if scene is None:
@@ -454,6 +511,9 @@ class HeuristicServoLiftPolicy(PolicyBase):
                 ee_frame = scene["ee_frame"]
                 data = getattr(ee_frame, "data", None)
                 if data is not None:
+                    # Prefer the controller target frame because the DifferentialIK
+                    # relative controller drives this frame; the actual sensor
+                    # source lags and using it for servo feedback under-damps the arm.
                     for attr in ("target_pos_w", "source_pos_w", "pos_w"):
                         if hasattr(data, attr):
                             pos = getattr(data, attr).squeeze().to(device)
@@ -462,7 +522,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
                             if pos.numel() == 3:
                                 eef_pos = pos
                                 break
-                    for attr in ("target_quat_w", "source_quat_w", "quat_w"):
+                    for attr in ("source_quat_w", "quat_w", "target_quat_w"):
                         if hasattr(data, attr):
                             quat = getattr(data, attr).squeeze().to(device)
                             if quat.ndim > 1:
