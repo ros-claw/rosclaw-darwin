@@ -111,18 +111,19 @@ the real Arena Docker `lift_object` task.  Consuming skill hints raises
 
 1. ✅ **The Arena eval pipeline reports non-zero real success.**
    `heuristic_servo_lift` achieved `success_rate = 0.20` in the first 5-episode
-   pilot and **≈0.50** on 20-episode runs after improving lift-phase tracking.
+   pilot and **≈0.44–0.50** on larger no-hint runs after improving lift-phase
+   tracking.
 2. ✅ **Skill hints transfer to real capability on the improved base.**
-   The 20-episode improved-base ablation shows:
-   - Manual hints: **0.50 → 0.65** (Δsuccess = **+0.15**)
-   - Auto-generated hints: **0.50 → 0.70** (Δsuccess = **+0.20**)
+   The improved-base ablations show:
+   - 20 episodes: manual **0.50 → 0.65** (+0.15), auto **0.50 → 0.70** (+0.20)
+   - 50 episodes: manual **0.44 → 0.56** (+0.12), auto **0.44 → 0.54** (+0.10)
 3. ✅ **Skill hints are consumed end-to-end.** Auto hints
    (`stronger_lift`, `target_tracking`) are generated from
    `target_not_reached_after_lift` failures and change the policy's lift height,
    lift gain, and horizontal tracking authority.
-4. ⚠️ **Earlier large-N runs on the original base showed no gain.** This means
-   the base policy must be strong enough before hints can help; the improvement
-   in lift-phase alignment is a prerequisite, not just the hints themselves.
+4. ⚠️ **The transfer gain is modest and shrinks with more data.** The effect is
+   real but not large; the base policy and the failure-to-hint mapping still
+   have headroom.
 5. ✅ **`heuristic_lift` and `zero_action` remain at 0 % success**, confirming
    that the result comes from the closed-loop servo, not from the environment.
 6. ✅ **`cheat_lift` remains the correct sanity check** and is excluded from
@@ -130,14 +131,15 @@ the real Arena Docker `lift_object` task.  Consuming skill hints raises
 
 ## Recommendations / Next Steps
 
-1. **Scale to 50–100 episodes per condition** to reduce sampling noise and
-   strengthen the evolution claim.
-2. **Cross-task replication** — run the same failure-to-hint pipeline on a
-   second manipulation task (e.g., pick-and-place or cube reorientation).
-3. **Stabilize the manual hint config** — `heuristic_servo_lift_with_hints.yaml`
-   worked on the improved base, but its advantage over auto hints is small;
-   consider deriving manual parameters automatically from the same failure
-   signature.
+1. **Cross-task replication** — run the same failure-to-hint pipeline on a
+   second manipulation task (e.g., pick-and-place or cube reorientation) to show
+   the transfer is not unique to `lift_object`.
+2. **Stabilize the manual hint config** — `heuristic_servo_lift_with_hints.yaml`
+   gives +0.12 over 50 episodes, but auto hints are close (+0.10); consider
+   deriving manual parameters automatically from the same failure signature.
+3. **Further reduce `target_not_reached_after_lift`** — stronger/more stable
+   grasp or a dedicated post-lift alignment phase could raise the no-hint
+   baseline and make the hint gain larger in absolute terms.
 4. **Learned policy** — once checkpoint/embodiment mismatches are resolved, run
    the RSL-RL baseline and compare it against the heuristic servo (see
    `LEARNED_LIFT_BASELINE_REPORT.md`).
