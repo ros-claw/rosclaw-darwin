@@ -199,6 +199,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._max_state_steps = config.max_state_steps
         self._success_threshold = config.success_threshold
         self._lift_kp_multiplier = 1.0
+        self._lift_horizontal_scale = 0.6
 
         if "efficient_execution" in self._skill_hints:
             self._kp *= 1.5
@@ -216,8 +217,10 @@ class HeuristicServoLiftPolicy(PolicyBase):
         if "stronger_lift" in self._skill_hints:
             self._kp *= 1.3
             self._lift_height += 0.05
+            self._lift_horizontal_scale = min(1.0, self._lift_horizontal_scale + 0.2)
         if "target_tracking" in self._skill_hints:
             self._lift_kp_multiplier = 1.5
+            self._lift_horizontal_scale = 1.0
             self._success_threshold = max(0.03, self._success_threshold * 0.8)
         if "faster_approach" in self._skill_hints:
             self._approach_offset_z *= 0.75
@@ -282,11 +285,14 @@ class HeuristicServoLiftPolicy(PolicyBase):
             else:
                 target = object_pos.clone()
                 target[2] += self._lift_height
-            # Temporarily boost gain for the final tracking phase if hinted.
-            original_kp = self._kp
-            self._kp *= self._lift_kp_multiplier
-            self._apply_position(action, eef_pos, eef_quat, target)
-            self._kp = original_kp
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._lift_kp_multiplier,
+                horizontal_scale=self._lift_horizontal_scale,
+            )
             action = self._set_gripper(action, open=False)
             # Transition to HOLD when the object is close to the command target
             # (or when the end-effector reaches a pure height target).
@@ -352,11 +358,15 @@ class HeuristicServoLiftPolicy(PolicyBase):
         eef_pos: torch.Tensor | None,
         eef_quat: torch.Tensor | None,
         target: torch.Tensor,
+        kp_multiplier: float = 1.0,
+        horizontal_scale: float = 1.0,
     ) -> None:
         """Write a position (and orientation) command into ``action[..., :3]``."""
         if eef_pos is None:
             return
-        delta = self._kp * (target - eef_pos)
+        delta = self._kp * kp_multiplier * (target - eef_pos)
+        if horizontal_scale != 1.0:
+            delta[:2] *= horizontal_scale
         # In relative mode we want to saturate the action to maximize step size
         # (the controller is heavily damped). In absolute mode keep steps small
         # so mock/unit-test environments remain stable.
