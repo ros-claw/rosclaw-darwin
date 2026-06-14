@@ -65,6 +65,8 @@ def _run_condition(label: str, adapter: ArenaAdapter, base_config: dict, episode
     print(f"[ablation] {label}")
     result = adapter.run_policy(config, episodes=episodes, max_steps=max_steps)
     print(f"  success_rate={result.metrics.get('success_rate')} progress={result.metrics.get('progress_mean')} failure={result.failure_types}")
+    # Brief pause between Docker runs to avoid HDF5 recording lock collisions.
+    time.sleep(5)
     return result
 
 
@@ -72,9 +74,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Skill hint ablation for lift_object")
     parser.add_argument("--task", default="examples/tasks/native/lift_object.yaml")
     parser.add_argument("--policy", default="configs/policies/heuristic_servo_lift.yaml")
-    parser.add_argument("--episodes", type=int, default=3)
+    parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--max-steps", type=int, default=None)
-    parser.add_argument("--manual-hints", default="faster_approach,larger_servo_gain")
+    parser.add_argument("--manual-hints", default="grasp_adjust,efficient_execution,adaptive_skill")
+    parser.add_argument("--manual-policy", default=None, help="Optional policy config YAML to use for the manual-hints condition (overrides --manual-hints).")
     parser.add_argument("--out", default="/tmp/rosclaw_data/ablations/lift_skill_hints")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -89,22 +92,51 @@ def main() -> None:
     if args.dry_run:
         base_config["dry_run"] = True
 
+    # Clear any stale HDF5 recording locks from previous Arena Docker runs.
+    hdf5_dir = Path("/tmp/rosclaw_data/hdf5")
+    if hdf5_dir.exists():
+        for child in hdf5_dir.iterdir():
+            try:
+                if child.is_dir():
+                    import shutil
+
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            except Exception:
+                pass
+
     adapter = ArenaAdapter(task)
     policy_metadata = load_policy_metadata(base_config)
 
     # A. Without hints
     result_no = _run_condition("without_hints", adapter, base_config, args.episodes, args.max_steps, {})
 
-    # B. With manual hints
-    manual_hints = [h.strip() for h in args.manual_hints.split(",") if h.strip()]
-    result_manual = _run_condition(
-        "manual_hints",
-        adapter,
-        base_config,
-        args.episodes,
-        args.max_steps,
-        {"skill_hints": manual_hints},
-    )
+    # B. With manual hints (either an explicit tuned config or skill-hint overrides)
+    if args.manual_policy:
+        with open(args.manual_policy, "r", encoding="utf-8") as f:
+            manual_config = yaml.safe_load(f) or {}
+        manual_config.setdefault("policy_id", Path(args.manual_policy).stem)
+        if args.dry_run:
+            manual_config["dry_run"] = True
+        result_manual = _run_condition(
+            "manual_hints",
+            adapter,
+            manual_config,
+            args.episodes,
+            args.max_steps,
+            {},
+        )
+    else:
+        manual_hints = [h.strip() for h in args.manual_hints.split(",") if h.strip()]
+        result_manual = _run_condition(
+            "manual_hints",
+            adapter,
+            base_config,
+            args.episodes,
+            args.max_steps,
+            {"skill_hints": manual_hints},
+        )
 
     # C. Auto hints: generate from no-hint failure counts, then rerun.
     engine = FailureToHintEngine.from_yaml()

@@ -110,30 +110,35 @@ the real Arena Docker `lift_object` task.  Consuming skill hints raises
 ## Honest Conclusions
 
 1. ✅ **The Arena eval pipeline reports non-zero real success.**
-   `heuristic_servo_lift` achieved `success_rate = 0.20` on real Docker
-   rollouts; `heuristic_servo_lift_with_hints` achieved `0.60`.
-2. ✅ **Skill hints transfer to real capability.** The with-hints condition
-   beats the no-hints condition by Δsuccess = +0.40 and Δprogress = +0.0211.
-3. ⚠️ **Success is not yet deterministic.** Only 1/5 no-hint episodes and 3/5
-   hint episodes succeed; the residual failures are
+   `heuristic_servo_lift` achieved `success_rate = 0.20` on the first 5-episode
+   Docker rollouts and **≈0.40–0.50** on follow-up 20-episode runs.
+2. ✅ **Skill hints are consumed.** Both the manual hint set
+   (`grasp_adjust`, `efficient_execution`, `adaptive_skill`) and auto-generated
+   hints (`stronger_lift`, `target_tracking`) are injected into the policy and
+   change its parameters.
+3. ⚠️ **Skill-hint transfer gain did not replicate at larger sample size.**
+   The 5-episode pilot showed Δsuccess = +0.40, but 20-episode ablations show
+   manual hints and auto hints performing equal to or slightly below the no-hint
+   baseline (see `SKILL_HINT_PROGRESS_ABLATION_REPORT.md`).
+4. ⚠️ **Success is not yet deterministic.** Residual failures are consistently
    `target_not_reached_after_lift` (the object is lifted but does not quite
    settle within the 0.06 m tolerance).
-4. ⚠️ **`heuristic_lift` and `zero_action` remain at 0 % success**, confirming
+5. ✅ **`heuristic_lift` and `zero_action` remain at 0 % success**, confirming
    that the new result comes from the closed-loop servo, not from the
    environment or luck.
-5. ✅ **`cheat_lift` remains the correct sanity check** and is excluded from
+6. ✅ **`cheat_lift` remains the correct sanity check** and is excluded from
    capability claims via `PolicyMetadata`.
 
 ## Recommendations / Next Steps
 
-1. **Increase robustness** — add a short horizontal-alignment phase after lift
-   to reduce `target_not_reached_after_lift` failures.
-2. **Run a larger episode budget** — with 5 episodes the with-hints gain is
-   promising but noisy; run 20–50 episodes for a stable transfer-gain estimate.
-3. **Auto-generated hints** — wire the failure-to-hint engine so the same
-   `grasp_adjust`/`efficient_execution` hints are produced automatically from
-   Loop 1 failures and consumed in Loop 2, then compare with the manual-hint
-   ablation.
+1. **Reduce `target_not_reached_after_lift`** — improve grasp stability or add
+   a post-lift horizontal-alignment phase so the object settles inside the
+   success tolerance more reliably.
+2. **Re-run the hint ablation on a stronger baseline** — once the no-hint
+   success is consistently higher, test whether hints can push it further.
+3. **Revisit the failure-to-hint mapping** — the current rule for
+   `target_not_reached_after_lift` may not map to the parameters that actually
+   affect final object-to-target alignment.
 4. **Learned policy** — once checkpoint/embodiment mismatches are resolved, run
    the RSL-RL baseline and compare it against the heuristic servo (see
    `LEARNED_LIFT_BASELINE_REPORT.md`).
