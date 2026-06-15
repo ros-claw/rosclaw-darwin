@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from rosclaw_darwin.evaluation.grasp_metrics import infer_grasp_stability
 from rosclaw_darwin.tdl.schema import Task
 
 
@@ -45,6 +46,9 @@ class FailureSignature(BaseModel):
     drop_step: int | None = None
     slip_score: float | None = None
     held_duration_steps: int | None = None
+    object_follows_eef: bool | None = None
+    rotation_induced_slip: bool = False
+    hold_instability: bool = False
 
     # target alignment
     target_residual_final: float | None = None
@@ -56,6 +60,15 @@ class FailureSignature(BaseModel):
     orientation_error_final: float | None = None
     orientation_error_min: float | None = None
     orientation_requirement_present: bool = False
+    eef_yaw_final: float | None = None
+    object_yaw_final: float | None = None
+    yaw_transferred_to_object: bool = False
+    yaw_not_transferred_to_object: bool = False
+
+    # gripper closure diagnostic
+    blocked_gripper_normal: bool | None = None
+    blocked_gripper_abnormal: bool | None = None
+    gripper_pos_min: float | None = None
 
     # action / controller
     nonzero_action_rate: float | None = None
@@ -159,6 +172,54 @@ def infer_failure_signature(
             mean_action_norm = sum(valid_norms) / len(valid_norms)
             nonzero_action_rate = sum(1 for n in valid_norms if n > thr["action_norm_low"]) / len(valid_norms)
 
+    # Grasp stability from step-level trace (v3).
+    grasp_stability = infer_grasp_stability(trace, lift_threshold=thr["lift_threshold"], drop_threshold=thr["drop_threshold"]) if trace else None
+    object_follows_eef = grasp_stability["object_follows_eef"] if grasp_stability else None
+    rotation_induced_slip = False
+    hold_instability = False
+    yaw_transferred_to_object = False
+    yaw_not_transferred_to_object = False
+    eef_yaw_final = None
+    object_yaw_final = None
+    gripper_pos_min = None
+    if trace:
+        gripper_positions = [s.get("gripper_pos") for s in trace if s.get("gripper_pos") is not None]
+        if gripper_positions:
+            gripper_pos_min = min(gripper_positions)
+        last = trace[-1]
+        eef_yaw_final = _to_float(last.get("eef_yaw"))
+        object_yaw_final = _to_float(last.get("object_yaw"))
+        if grasp_stability and grasp_stability["drop_detected"]:
+            drop_step_trace = grasp_stability.get("drop_step")
+            if drop_step_trace is not None:
+                # Map step index in lifted trace back to global step if possible.
+                drop_step = drop_step_trace
+                drop_phase = None
+                for i, s in enumerate(trace):
+                    if i == drop_step:
+                        drop_phase = s.get("phase")
+                        break
+                if drop_phase in ("REORIENT",):
+                    rotation_induced_slip = True
+                elif drop_phase in ("HOLD",):
+                    hold_instability = True
+        if orientation_required and eef_yaw_final is not None and object_yaw_final is not None:
+            # Detect whether object yaw changed while eef yaw did not.
+            object_yaw_initial = _to_float(trace[0].get("object_yaw"))
+            eef_yaw_initial = _to_float(trace[0].get("eef_yaw"))
+            if object_yaw_initial is not None and abs(object_yaw_final - object_yaw_initial) > 0.05:
+                if eef_yaw_initial is not None and abs(eef_yaw_final - eef_yaw_initial) < 0.05:
+                    yaw_not_transferred_to_object = True
+                else:
+                    yaw_transferred_to_object = True
+
+    # Blocked gripper diagnostic: 0.024 is considered normal for held cube.
+    blocked_gripper_normal = None
+    blocked_gripper_abnormal = None
+    if gripper_pos_min is not None:
+        blocked_gripper_normal = 0.015 <= gripper_pos_min <= 0.035
+        blocked_gripper_abnormal = gripper_pos_min > 0.04 or gripper_pos_min < 0.001
+
     # Phase at failure.
     phase_at_failure = None
     if phase_trace:
@@ -184,6 +245,22 @@ def infer_failure_signature(
         if object_dropped:
             tags.append("lifted_then_dropped")
             tags.append("unstable_grasp")
+            if rotation_induced_slip:
+                tags.append("rotation_induced_slip")
+            if hold_instability:
+                tags.append("hold_instability")
+        if object_follows_eef:
+            tags.append("object_follows_eef")
+        elif object_follows_eef is False:
+            tags.append("object_not_following_eef")
+        if yaw_not_transferred_to_object:
+            tags.append("yaw_not_transferred_to_object")
+        if yaw_transferred_to_object:
+            tags.append("yaw_transferred_but_slipped")
+        if blocked_gripper_normal:
+            tags.append("blocked_gripper_normal")
+        if blocked_gripper_abnormal:
+            tags.append("blocked_gripper_abnormal")
 
     if orientation_required and orientation_final is not None and orientation_final > thr["orientation_threshold"]:
         tags.append("orientation_gap")
@@ -228,6 +305,9 @@ def infer_failure_signature(
         object_dropped=object_dropped,
         drop_step=drop_step,
         held_duration_steps=_to_int(episode_metrics.get("held_duration_steps")),
+        object_follows_eef=object_follows_eef,
+        rotation_induced_slip=rotation_induced_slip,
+        hold_instability=hold_instability,
         target_residual_final=target_residual_final,
         target_residual_min=target_residual_min,
         target_alignment_gap=target_gap,
@@ -235,6 +315,13 @@ def infer_failure_signature(
         orientation_error_final=orientation_final,
         orientation_error_min=orientation_min,
         orientation_requirement_present=orientation_required,
+        eef_yaw_final=eef_yaw_final,
+        object_yaw_final=object_yaw_final,
+        yaw_transferred_to_object=yaw_transferred_to_object,
+        yaw_not_transferred_to_object=yaw_not_transferred_to_object,
+        blocked_gripper_normal=blocked_gripper_normal,
+        blocked_gripper_abnormal=blocked_gripper_abnormal,
+        gripper_pos_min=gripper_pos_min,
         nonzero_action_rate=nonzero_action_rate,
         mean_action_norm=mean_action_norm,
         controller_response_low=bool(mean_action_norm is not None and mean_action_norm <= thr["action_norm_low"]),
@@ -246,8 +333,12 @@ def infer_failure_signature(
 def _choose_dominant_bottleneck(tags: list[str], failure_type: str) -> str | None:
     """Pick the most actionable bottleneck from tags."""
     priority = [
+        "yaw_not_transferred_to_object",
+        "rotation_induced_slip",
+        "hold_instability",
         "lifted_then_dropped",
         "unstable_grasp",
+        "object_not_following_eef",
         "grasped_but_not_lifted",
         "reached_but_not_grasped",
         "final_alignment_gap",

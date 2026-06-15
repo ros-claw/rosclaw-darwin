@@ -97,3 +97,52 @@ rules:
     confidence: 0.9
     rationale: "Policy produced near-zero actions."
     expected_effect: "Restore non-zero action output."
+
+  # FailureSignature v3 recipes based on goal_pose physical diagnosis.
+  - name: rotation_induced_slip_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - rotation_induced_slip
+      - lifted_then_dropped
+    hints:
+      - incremental_yaw_reorientation
+      - stabilize_after_rotation
+      - reduce_rotation_acceleration
+      - maintain_grip_force
+    parameter_overrides:
+      yaw_step_size: 0.10
+      stabilize_steps_after_yaw: 20
+      max_lift_delta_z: 0.05
+    confidence: 0.6
+    rationale: "Object slips during reorientation; rotate in smaller increments and stabilize."
+    expected_effect: "Reduce slip-induced drops during yaw changes."
+
+  - name: yaw_not_transferred_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - yaw_not_transferred_to_object
+    hints:
+      - use_effective_yaw_axis
+      - verify_eef_yaw_response
+    parameter_overrides:
+      yaw_action_axis: calibrated_axis
+      use_quaternion_orientation_target: true
+    confidence: 0.55
+    rationale: "Rotational action does not change end-effector yaw; switch to a control mode that can command orientation."
+    expected_effect: "Enable controlled end-effector reorientation."
+
+  - name: blocked_gripper_normal_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - blocked_gripper_normal
+    hints:
+      - use_object_following_grasp_metric
+    parameter_overrides:
+      grasp_success_metric: object_following
+      gripper_close_threshold: 0.03
+    confidence: 0.85
+    rationale: "Gripper stops at the cube width; use object-follows-eef instead of gripper_pos threshold."
+    expected_effect: "Avoid waiting for impossible closure levels."

@@ -203,6 +203,9 @@ class _ArenaComponentMapper:
 
         # Enable contact sensors on the procedural cube spawn config so
         # PickAndPlaceTask can create contact sensors on these objects.
+        # Also support diagnostic physics ablation (friction / size / mass).
+        physics_ablation = dict(self.task.metadata.get("physics_ablation") or {})
+
         if hasattr(_procedural_cls, "_generate_rigid_cfg"):
             _orig_generate = _procedural_cls._generate_rigid_cfg
 
@@ -210,6 +213,14 @@ class _ArenaComponentMapper:
                 cfg = _orig_generate(self)
                 if hasattr(cfg, "spawn") and cfg.spawn is not None:
                     cfg.spawn.activate_contact_sensors = True
+                    variant = getattr(self, "_physics_variant", {})
+                    if variant.get("static_friction") is not None and hasattr(cfg.spawn, "physics_material"):
+                        cfg.spawn.physics_material.static_friction = variant["static_friction"]
+                        cfg.spawn.physics_material.dynamic_friction = variant.get("dynamic_friction", variant["static_friction"])
+                    if variant.get("size") is not None and hasattr(cfg.spawn, "size"):
+                        cfg.spawn.size = variant["size"]
+                    if variant.get("mass") is not None and hasattr(cfg.spawn, "mass_props"):
+                        cfg.spawn.mass_props.mass = variant["mass"]
                 return cfg
 
             _procedural_cls._generate_rigid_cfg = _patched_generate
@@ -220,6 +231,7 @@ class _ArenaComponentMapper:
             # Each object needs a unique prim path to avoid USD stage collisions.
             prim_path = f"{{ENV_REGEX_NS}}/{obj.name}"
             inst = _procedural_cls(instance_name=obj.name, prim_path=prim_path)
+            inst._physics_variant = physics_ablation
             # z=0.07 places object bottom at table top (z=0.02) for procedural cube
             # with half-height 0.05. Previous z=0.05 caused object to spawn inside table.
             inst.set_initial_pose(Pose(position_xyz=(0.35 + idx * 0.05, 0.0, 0.07)))
@@ -229,6 +241,7 @@ class _ArenaComponentMapper:
         # manipulation tasks have something to interact with.
         if not arena_objects:
             inst = _procedural_cls(instance_name="object", prim_path="{ENV_REGEX_NS}/object")
+            inst._physics_variant = physics_ablation
             from isaaclab_arena.utils.pose import Pose
             inst.set_initial_pose(Pose(position_xyz=(0.35, 0.0, 0.07)))
             arena_objects.append(inst)

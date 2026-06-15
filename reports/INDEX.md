@@ -27,6 +27,12 @@
 - [Gripper Calibration Report](GRIPPER_CALIBRATION_REPORT.md) — empty vs. cube-blocked gripper closure limits.
 - [Rotational Action Calibration Report](ROTATIONAL_ACTION_CALIBRATION_REPORT.md) — mapping action[3:6] to end-effector rotation.
 - [Goal Pose Grasp Stability Metrics v3 Report](GOAL_POSE_GRASP_STABILITY_METRICS_V3_REPORT.md) — object-following stability analysis of the latest goal_pose trace.
+- [Goal Pose Physics Ablation Report](GOAL_POSE_PHYSICS_ABLATION_REPORT.md) — friction / size / mass diagnostic ablations.
+- [Goal Pose Subtask Decomposition Report](GOAL_POSE_SUBTASK_DECOMPOSITION_REPORT.md) — lift-only, lift-hold, and yaw subtask boundary.
+- [Failure Signature v3 and Hint Recipe Report](FAILURE_SIGNATURE_V3_HINT_RECIPE_REPORT.md) — new signature tags and recipes.
+- [Cross-Task Transfer Status v2 Report](CROSS_TASK_TRANSFER_STATUS_V2_REPORT.md) — transfer level refresh.
+- [External Goal Pose Review Package Report](EXTERNAL_GOAL_POSE_REVIEW_PACKAGE_REPORT.md) — packaged materials for external experts.
+- [Final Goal Pose Diagnosis and Evolution Report](FINAL_GOAL_POSE_DIAGNOSIS_AND_EVOLUTION_REPORT.md) — answers to the 12 final questions.
 - [Goal Pose Diagnostic Report for External Review](GOAL_POSE_DIAGNOSTIC_REPORT_FOR_EXTERNAL_REVIEW.md) — per-step trace diagnosis of why the cube slips, with questions for external experts.
 
 ## Evolution and ablation

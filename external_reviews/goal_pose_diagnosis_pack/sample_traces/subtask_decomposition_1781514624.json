@@ -1,0 +1,147 @@
+[
+  {
+    "task_id": "goal_pose_lift_only",
+    "arena_status": "completed",
+    "subtask_success": true,
+    "object_lifted": true,
+    "object_peak": 0.3317113220691681,
+    "pose_ok": true,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 892,
+      "drop_detected": true,
+      "drop_step": 917,
+      "object_height_peak": 0.3317113220691681,
+      "object_height_final": 0.11224248260259628,
+      "object_height_drop_after_peak": 0.2194688394665718,
+      "relative_object_eef_distance_mean": 0.005154944739100197,
+      "relative_object_eef_distance_max": 0.005161545194649081,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_lift_only_num_episodes": 1.0,
+      "goal_pose_lift_only_jobmetric_success_rate": 0.0,
+      "goal_pose_lift_only_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_lift_only_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_lift_hold",
+    "arena_status": "completed",
+    "subtask_success": true,
+    "object_lifted": true,
+    "object_peak": 0.33208513259887695,
+    "pose_ok": true,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 891,
+      "drop_detected": true,
+      "drop_step": 924,
+      "object_height_peak": 0.33208513259887695,
+      "object_height_final": 0.11208529025316238,
+      "object_height_drop_after_peak": 0.21999984234571457,
+      "relative_object_eef_distance_mean": 0.005545999526510422,
+      "relative_object_eef_distance_max": 0.005550087697785454,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_lift_hold_num_episodes": 1.0,
+      "goal_pose_lift_hold_jobmetric_success_rate": 0.0,
+      "goal_pose_lift_hold_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_lift_hold_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_lift_small_yaw",
+    "arena_status": "completed",
+    "subtask_success": false,
+    "object_lifted": true,
+    "object_peak": 0.33123621344566345,
+    "pose_ok": false,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 884,
+      "drop_detected": true,
+      "drop_step": 914,
+      "object_height_peak": 0.33123621344566345,
+      "object_height_final": 0.1126912534236908,
+      "object_height_drop_after_peak": 0.21854496002197266,
+      "relative_object_eef_distance_mean": 0.0048731768622418715,
+      "relative_object_eef_distance_max": 0.004875920042823831,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_lift_small_yaw_num_episodes": 1.0,
+      "goal_pose_lift_small_yaw_jobmetric_success_rate": 0.0,
+      "goal_pose_lift_small_yaw_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_lift_small_yaw_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_lift_90_yaw",
+    "arena_status": "completed",
+    "subtask_success": false,
+    "object_lifted": true,
+    "object_peak": 0.3260839581489563,
+    "pose_ok": false,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 869,
+      "drop_detected": true,
+      "drop_step": 929,
+      "object_height_peak": 0.3260839581489563,
+      "object_height_final": 0.11441082507371902,
+      "object_height_drop_after_peak": 0.21167313307523727,
+      "relative_object_eef_distance_mean": 0.004176831220621139,
+      "relative_object_eef_distance_max": 0.0041950971057651484,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_lift_90_yaw_num_episodes": 1.0,
+      "goal_pose_lift_90_yaw_jobmetric_success_rate": 0.0,
+      "goal_pose_lift_90_yaw_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_lift_90_yaw_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_001",
+    "arena_status": "completed",
+    "subtask_success": false,
+    "object_lifted": true,
+    "object_peak": 0.33169054985046387,
+    "pose_ok": false,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 890,
+      "drop_detected": true,
+      "drop_step": 919,
+      "object_height_peak": 0.33169054985046387,
+      "object_height_final": 0.11345929652452469,
+      "object_height_drop_after_peak": 0.21823125332593918,
+      "relative_object_eef_distance_mean": 0.005480845950417508,
+      "relative_object_eef_distance_max": 0.005490991247319996,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_001_num_episodes": 1.0,
+      "goal_pose_001_jobmetric_success_rate": 0.0,
+      "goal_pose_001_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_001_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  }
+]

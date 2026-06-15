@@ -1,0 +1,38 @@
+id: goal_pose_lift_hold
+name: Goal Pose Lift and Hold
+version: "1.0"
+description: Lift the cube and hold it elevated; do not require reorientation.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Lift
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [object_lifted]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose]
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: cube_goal_pose
+    object: dex_cube
+    embodiment: franka_ik

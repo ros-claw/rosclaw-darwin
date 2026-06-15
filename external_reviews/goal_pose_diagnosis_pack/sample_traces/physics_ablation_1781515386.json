@@ -1,0 +1,133 @@
+[
+  {
+    "task_id": "goal_pose_001",
+    "physics_ablation": {},
+    "arena_status": "completed",
+    "object_lifted": true,
+    "object_peak": 0.3274221122264862,
+    "min_object_yaw_error": 0.493266788948189,
+    "final_object_yaw_error": 0.493266788948189,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 877,
+      "drop_detected": true,
+      "drop_step": 932,
+      "object_height_peak": 0.3274221122264862,
+      "object_height_final": 0.10665056109428406,
+      "object_height_drop_after_peak": 0.22077155113220215,
+      "relative_object_eef_distance_mean": 0.0037324043577842024,
+      "relative_object_eef_distance_max": 0.003750972626355397,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_001_num_episodes": 1.0,
+      "goal_pose_001_jobmetric_success_rate": 0.0,
+      "goal_pose_001_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_001_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_high_friction",
+    "physics_ablation": {
+      "static_friction": 2.5,
+      "dynamic_friction": 2.5
+    },
+    "arena_status": "completed",
+    "object_lifted": true,
+    "object_peak": 0.3287954032421112,
+    "min_object_yaw_error": 0.6856642510285123,
+    "final_object_yaw_error": 0.6856642510285123,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 864,
+      "drop_detected": true,
+      "drop_step": 913,
+      "object_height_peak": 0.3287954032421112,
+      "object_height_final": 0.11536538600921631,
+      "object_height_drop_after_peak": 0.2134300172328949,
+      "relative_object_eef_distance_mean": 0.002575132452230552,
+      "relative_object_eef_distance_max": 0.0025836607686567457,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_high_friction_num_episodes": 1.0,
+      "goal_pose_high_friction_jobmetric_success_rate": 0.0,
+      "goal_pose_high_friction_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_high_friction_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_small_cube",
+    "physics_ablation": {
+      "size": [
+        0.025,
+        0.05,
+        0.05
+      ]
+    },
+    "arena_status": "completed",
+    "object_lifted": true,
+    "object_peak": 0.3321881592273712,
+    "min_object_yaw_error": 0.5943340483052898,
+    "final_object_yaw_error": 0.5943340483052898,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 898,
+      "drop_detected": true,
+      "drop_step": 924,
+      "object_height_peak": 0.3321881592273712,
+      "object_height_final": 0.11301296949386597,
+      "object_height_drop_after_peak": 0.21917518973350525,
+      "relative_object_eef_distance_mean": 0.0057859256628474505,
+      "relative_object_eef_distance_max": 0.0057982303163257335,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_small_cube_num_episodes": 1.0,
+      "goal_pose_small_cube_jobmetric_success_rate": 0.0,
+      "goal_pose_small_cube_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_small_cube_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  },
+  {
+    "task_id": "goal_pose_light_cube",
+    "physics_ablation": {
+      "mass": 0.1
+    },
+    "arena_status": "completed",
+    "object_lifted": true,
+    "object_peak": 0.33094269037246704,
+    "min_object_yaw_error": 0.6205509941241641,
+    "final_object_yaw_error": 0.6205509941241641,
+    "grasp_stability": {
+      "object_lifted": true,
+      "object_follows_eef": true,
+      "held_duration_steps": 882,
+      "drop_detected": true,
+      "drop_step": 915,
+      "object_height_peak": 0.33094269037246704,
+      "object_height_final": 0.1138138473033905,
+      "object_height_drop_after_peak": 0.21712884306907654,
+      "relative_object_eef_distance_mean": 0.004535900815391406,
+      "relative_object_eef_distance_max": 0.004539257399402979,
+      "grasp_stability_score": 0.65
+    },
+    "arena_metrics": {
+      "goal_pose_light_cube_num_episodes": 1.0,
+      "goal_pose_light_cube_jobmetric_success_rate": 0.0,
+      "goal_pose_light_cube_jobmetric_object_moved_rate": 1.0,
+      "goal_pose_light_cube_jobmetric_num_episodes": 1.0,
+      "num_episodes": 1.0,
+      "success_rate": 0.0
+    }
+  }
+]

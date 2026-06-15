@@ -1,0 +1,41 @@
+id: goal_pose_high_friction
+name: Goal Pose High Friction
+version: "1.0"
+description: goal_pose with 5x baseline friction on the procedural cube.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose]
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: cube_goal_pose
+    object: dex_cube
+    embodiment: franka_ik
+  physics_ablation:
+    static_friction: 2.5
+    dynamic_friction: 2.5
