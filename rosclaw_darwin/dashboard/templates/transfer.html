@@ -1,41 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Ablations - ROSClaw-Darwin{% endblock %}
+{% block title %}Transfer - ROSClaw-Darwin{% endblock %}
 {% block content %}
-<div class="card"><h1>🔬 Skill Hint Ablations</h1></div>
-<div class="card">
-  <img src="/ablations/chart.svg" alt="Ablations chart" style="max-width:100%;height:auto;">
-</div>
+<div class="card"><h1>🔄 Cross-Task Transfer Matrix</h1></div>
 
 {% if ablations %}
 <div class="card">
+  <img src="/transfer/chart.svg" alt="Transfer matrix chart" style="max-width:100%;height:auto;">
+</div>
+
+<div class="card">
   <table>
     <tr>
-      <th>Source</th>
       <th>Task</th>
       <th>Policy</th>
-      <th>Episodes/cond</th>
       <th>no hint SR</th>
       <th>manual SR</th>
       <th>auto SR</th>
-      <th>auto hint names</th>
-      <th>ΔSR (auto)</th>
+      <th>Transfer gain (auto)</th>
+      <th>Auto hint names</th>
     </tr>
     {% for a in ablations %}
     <tr>
-      <td><code>{{ a.source }}</code></td>
       <td><code>{{ a.task_id }}</code></td>
       <td><code>{{ a.policy_id }}</code></td>
-      <td>{{ a.episodes or '-' }}</td>
       <td class="metric">{{ "%.3f"|format(a.without_hints_sr) }}</td>
       <td class="metric">{{ "%.3f"|format(a.manual_hints_sr) }}</td>
       <td class="metric">{{ "%.3f"|format(a.with_auto_hints_sr) }}</td>
+      <td class="metric" style="color: {% if a.skill_transfer_gain > 0 %}#2b8a3e{% elif a.skill_transfer_gain < 0 %}#c92a2a{% else %}#495057{% endif %};">{{ "%+.3f"|format(a.skill_transfer_gain) }}</td>
       <td><code>{{ ', '.join(a.auto_hint_names or []) }}</code></td>
-      <td class="metric">{{ "%+.3f"|format(a.skill_transfer_gain) }}</td>
     </tr>
     {% endfor %}
   </table>
 </div>
 {% else %}
-<div class="card"><p>No ablation pairs found. Run evolutions with and without <code>--auto-skill-hints</code>, or run <code>scripts/ablations/run_lift_skill_hint_ablation.py</code>.</p></div>
+<div class="card"><p>No ablation pairs found. Run evolutions or ablation scripts first.</p></div>
 {% endif %}
 {% endblock %}

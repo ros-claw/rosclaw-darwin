@@ -55,18 +55,6 @@ def _extract_phase_traces(result: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _extract_phase_traces(result: Any) -> list[dict[str, Any]]:
-    """Return per-episode phase traces if available."""
-    traces = result.metadata.get("phase_traces")
-    if isinstance(traces, list):
-        return traces
-    am = result.metadata.get("arena_metrics_output", {})
-    traces = am.get("phase_traces")
-    if isinstance(traces, list):
-        return traces
-    return []
-
-
 def _make_failure_signatures(task: Task, episodes: list[dict[str, Any]], phase_traces: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Infer FailureSignature v2 records for each episode."""
     signatures = infer_failure_signatures_for_run(task, episodes, phase_traces=phase_traces)
@@ -81,17 +69,39 @@ def _run_condition(
     extra: dict[str, Any],
     seed: int,
     out_dir: Path,
+    max_retries: int = 1,
 ) -> Any:
     config = dict(base_config)
     config.update(extra)
     print(f"[statistical_validation] seed={seed} condition={label}")
-    result = adapter.run_policy(config, episodes=episodes)
+
+    # Clear any stale per-step trace so the episode-level metrics belong to this run.
+    try:
+        stale_trace = Path("/tmp/rosclaw_data/traces/episode_trace.jsonl")
+        if stale_trace.exists():
+            stale_trace.unlink()
+    except Exception:
+        pass
+
+    result = None
+    for attempt in range(max_retries + 1):
+        result = adapter.run_policy(config, episodes=episodes)
+        extracted = _extract_episodes(result)
+        if extracted:
+            break
+        if result.status == "dry_run":
+            break
+        if attempt < max_retries:
+            print(f"  [attempt {attempt + 1}] no per-episode metrics; retrying...")
+            time.sleep(5)
+
+    assert result is not None
+    extracted_episodes = _extract_episodes(result)
+    phase_traces = _extract_phase_traces(result)
+    failure_signatures = _make_failure_signatures(adapter.task, extracted_episodes, phase_traces)
 
     # Persist full reproducibility artifacts.
     run_dir = out_dir / f"seed{seed}" / label / result.run_id
-    episodes = _extract_episodes(result)
-    phase_traces = _extract_phase_traces(result)
-    failure_signatures = _make_failure_signatures(adapter.task, episodes, phase_traces)
     persist_run_artifacts(
         run_dir=run_dir,
         result=result,
@@ -99,7 +109,7 @@ def _run_condition(
         policy_config=config,
         command=result.command or [],
         seed=seed,
-        episode_metrics=episodes,
+        episode_metrics=extracted_episodes,
         phase_traces=phase_traces,
         failure_signatures=failure_signatures,
         stdout=result.metadata.get("stdout_preview", ""),
@@ -109,37 +119,53 @@ def _run_condition(
     print(
         f"  success_rate={result.metrics.get('success_rate')} "
         f"progress={result.metrics.get('progress_mean', result.metrics.get('progress'))} "
+        f"episodes={len(extracted_episodes)} "
         f"failure={result.failure_types}"
     )
     time.sleep(5)  # brief pause between Docker runs
     return result
 
 
-def _condition_summary(results: list[Any]) -> dict[str, Any]:
+def _condition_summary(results: list[Any], expected_episodes: int) -> dict[str, Any]:
     successes: list[bool] = []
     progress_values: list[float] = []
     failure_counts: dict[str, int] = {}
+    observed_episodes = 0
     for r in results:
         episodes = _extract_episodes(r)
         if episodes:
+            observed_episodes += len(episodes)
             for ep in episodes:
                 successes.append(bool(ep.get("success", False)))
                 progress_values.append(float(ep.get("progress", 0.0)))
         else:
-            # Fallback to aggregate metrics.
+            # Fallback to aggregate metrics when per-episode export failed.
+            n = int(r.metrics.get("num_episodes", expected_episodes))
+            observed_episodes += n
             success_rate = r.metrics.get("success_rate", 0.0)
-            n = int(r.metrics.get("num_episodes", len(results)))
-            successes.extend([True] * int(round(success_rate * n)) + [False] * (n - int(round(success_rate * n))))
-            progress_values.append(float(r.metrics.get("progress_mean", r.metrics.get("progress", 0.0))))
+            n_success = int(round(success_rate * n))
+            successes.extend([True] * n_success + [False] * (n - n_success))
+            mean_progress = float(r.metrics.get("progress_mean", r.metrics.get("progress", 0.0)))
+            progress_values.extend([mean_progress] * n)
 
         for ft, count in (r.failure_types or {}).items():
             failure_counts[ft] = failure_counts.get(ft, 0) + count
 
+    # Conservatively pad missing episodes (metric export dropped some episodes)
+    # as failures with zero progress so that CIs are honest.
+    total_expected = expected_episodes * len(results)
+    while len(successes) < total_expected:
+        successes.append(False)
+        progress_values.append(0.0)
+
     return {
         "n_total": len(successes),
+        "n_observed": observed_episodes,
         "success_summary": summarize_binary_condition(successes),
         "progress_summary": summarize_continuous_condition(progress_values),
         "failure_counts": failure_counts,
+        "progress_values": progress_values,
+        "successes": successes,
     }
 
 
@@ -156,10 +182,9 @@ def _compare_conditions(
         b["n_total"] - b["n_success"],
     )
     progress_delta = bootstrap_delta_ci(
-        [baseline_summary["progress_summary"]["mean"]] * baseline_summary["progress_summary"]["n"],
-        [variant_summary["progress_summary"]["mean"]] * variant_summary["progress_summary"]["n"],
+        baseline_summary.get("progress_values", []),
+        variant_summary.get("progress_values", []),
     )
-    # When only aggregate means are available, progress delta CI collapses to the point.
     return {
         "delta_success_rate": round(v["rate"] - b["rate"], 4),
         "delta_progress": round(variant_summary["progress_summary"]["mean"] - baseline_summary["progress_summary"]["mean"], 4),
@@ -220,7 +245,7 @@ def main() -> None:
             results_by_condition[condition].append(result)
 
     # Aggregate across seeds.
-    summaries = {c: _condition_summary(results) for c, results in results_by_condition.items()}
+    summaries = {c: _condition_summary(results, args.episodes) for c, results in results_by_condition.items()}
 
     # Pairwise comparisons.
     comparisons: dict[str, dict[str, Any]] = {}
@@ -261,14 +286,15 @@ def _render_report(summary: dict[str, Any]) -> str:
         "",
         "## Per-condition summary (aggregated across seeds)",
         "",
-        "| condition | n | success_rate | 95% CI | progress (mean ± std) | progress 95% CI |",
-        "|---|---|---|---|---|---|",
+        "| condition | n_expected | n_observed | success_rate | 95% CI | progress (mean ± std) | progress 95% CI |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
+    n_expected = summary["episodes_per_seed"] * len(summary["seeds"])
     for cond, s in summary["summaries"].items():
         ss = s["success_summary"]
         ps = s["progress_summary"]
         lines.append(
-            f"| {cond} | {ss['n_total']} | {ss['rate']} | "
+            f"| {cond} | {n_expected} | {s.get('n_observed', ss['n_total'])} | {ss['rate']} | "
             f"[{ss['ci_lower']}, {ss['ci_upper']}] | "
             f"{ps['mean']} ± {ps['std']} | "
             f"[{ps['ci_lower']}, {ps['ci_upper']}] |"
@@ -279,7 +305,7 @@ def _render_report(summary: dict[str, Any]) -> str:
         "## Pairwise comparisons vs. without_hints",
         "",
         "| comparison | Δsuccess | Δprogress | Fisher exact p | odds_ratio | progress Δ CI |",
-        "|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|",
     ])
     for comp, c in summary["comparisons"].items():
         fisher = c["fisher_exact"]
@@ -302,8 +328,10 @@ def _render_report(summary: dict[str, Any]) -> str:
         "## Honest conclusion",
         "",
         "This report aggregates multiple seeds with confidence intervals and Fisher",
-        "exact tests.  A positive Δsuccess whose CI is mostly above zero and whose",
-        "p-value is small provides stronger evidence than a single-seed point estimate.",
+        "exact tests.  Missing per-episode metrics are conservatively treated as",
+        "failures with zero progress, so the reported success rate is a lower bound.",
+        "A positive Δsuccess whose CI is mostly above zero and whose p-value is small",
+        "provides stronger evidence than a single-seed point estimate.",
         "",
     ])
     return "\n".join(lines) + "\n"

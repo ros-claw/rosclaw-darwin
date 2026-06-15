@@ -7,9 +7,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+
+from rosclaw_darwin.dashboard import charts
+
+
+class SVGResponse(Response):
+    media_type = "image/svg+xml"
 
 
 class DashboardApp:
@@ -109,6 +115,31 @@ class DashboardApp:
             return self.templates.TemplateResponse(request, "horizon_sweep.html", {
                 "sweeps": self._load_horizon_sweeps(),
             })
+
+        @self.app.get("/lift-progress/{run_id}/chart.svg", response_class=SVGResponse)
+        async def lift_progress_chart(run_id: str) -> Any:
+            run = self._find_progress_run_by_id(run_id)
+            if run is None:
+                return SVGResponse(content=charts.plot_lift_progress({}), status_code=404)
+            return SVGResponse(content=charts.plot_lift_progress(run))
+
+        @self.app.get("/ablations/chart.svg", response_class=SVGResponse)
+        async def ablations_chart() -> Any:
+            return SVGResponse(content=charts.plot_ablations(self._load_ablations()))
+
+        @self.app.get("/failures/chart.svg", response_class=SVGResponse)
+        async def failures_chart() -> Any:
+            return SVGResponse(content=charts.plot_failure_signature_distribution(self._load_progress_runs()))
+
+        @self.app.get("/transfer", response_class=HTMLResponse)
+        async def transfer_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "transfer.html", {
+                "ablations": self._load_ablations(),
+            })
+
+        @self.app.get("/transfer/chart.svg", response_class=SVGResponse)
+        async def transfer_chart() -> Any:
+            return SVGResponse(content=charts.plot_transfer_matrix(self._load_ablations()))
 
         @self.app.get("/leaderboard", response_class=HTMLResponse)
         async def leaderboard_page(request: Request) -> Any:
@@ -416,6 +447,12 @@ class DashboardApp:
             except Exception:
                 continue
         return runs
+
+    def _find_progress_run_by_id(self, run_id: str) -> dict[str, Any] | None:
+        for run in self._load_progress_runs():
+            if run.get("run_id") == run_id:
+                return run
+        return None
 
     def _load_horizon_sweeps(self) -> list[dict[str, Any]]:
         """Load horizon sweep summaries from diagnostics output directories."""

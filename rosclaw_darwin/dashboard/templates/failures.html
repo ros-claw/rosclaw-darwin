@@ -2,6 +2,10 @@
 {% block title %}Failures - ROSClaw-Darwin{% endblock %}
 {% block content %}
 <div class="card"><h1>⚠️ Failure Taxonomy</h1></div>
+<div class="card">
+  <img src="/failures/chart.svg" alt="Failure distribution chart" style="max-width:100%;height:auto;">
+</div>
+
 {% if failures %}
 <div class="card">
   <table>

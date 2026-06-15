@@ -18,6 +18,9 @@
     progress_mean: <span class="metric">{{ "%.3f"|format(run.progress_mean or 0.0) }}</span> |
     episodes: {{ run.num_episodes }}
   </p>
+  <div class="card" style="padding:0.5rem;">
+    <img src="/lift-progress/{{ run.run_id }}/chart.svg" alt="Lift progress chart for {{ run.run_id }}" style="max-width:100%;height:auto;">
+  </div>
   <table>
     <tr>
       <th>Episode</th>

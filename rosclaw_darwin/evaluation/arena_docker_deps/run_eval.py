@@ -539,7 +539,7 @@ def _write_metrics_file() -> None:
         output["rollout_num_episodes"] = last.get("num_episodes")
 
     # Source 4: per-episode progress metrics computed from step traces
-    trace_path = Path("/workspace/data/episode_trace.jsonl")
+    trace_path = Path("/workspace/data/traces/episode_trace.jsonl")
     if trace_path.exists():
         try:
             trace_episodes: dict[int, list[dict[str, Any]]] = {}
