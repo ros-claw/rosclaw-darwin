@@ -53,6 +53,39 @@ def _append_trace(step: dict[str, Any]) -> None:
         pass
 
 
+def _angle_diff(target: float, current: float) -> float:
+    """Smallest signed angle from current to target, wrapped to [-pi, pi]."""
+    diff = target - current
+    while diff > math.pi:
+        diff -= 2.0 * math.pi
+    while diff < -math.pi:
+        diff += 2.0 * math.pi
+    return diff
+
+
+def _quat_to_yaw(q: torch.Tensor) -> float:
+    """Yaw angle from a quaternion in Arena's (x, y, z, w) ordering."""
+    x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _quat_to_rpy(q: torch.Tensor) -> tuple[float, float, float]:
+    """Roll/pitch/yaw from a quaternion in Arena's (x, y, z, w) ordering."""
+    x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
+    sinr_cosp = 2.0 * (w * x + y * z)
+    cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinp = 2.0 * (w * y - z * x)
+    if abs(sinp) >= 1.0:
+        pitch = math.copysign(math.pi / 2.0, sinp)
+    else:
+        pitch = math.asin(sinp)
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    return roll, pitch, yaw
+
+
 _TRACE_METADATA_WRITTEN = False
 
 
@@ -1284,44 +1317,15 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
 
     @staticmethod
     def _quat_to_yaw(q: torch.Tensor) -> float:
-        # IsaacLab quaternion convention is (w, x, y, z).
-        x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
-        return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        return _quat_to_yaw(q)
 
     @staticmethod
     def _quat_to_rpy(q: torch.Tensor) -> tuple[float, float, float]:
-        """Convert quaternion to roll/pitch/yaw.
-
-        The policy's ``_quat_to_yaw`` has been calibrated against the
-        quaternion ordering returned by Arena (x, y, z, w).  This helper uses
-        the same convention so that roll/pitch/yaw are consistent with the yaw
-        values already used for orientation control.
-        """
-        x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
-        # roll (x-axis rotation)
-        sinr_cosp = 2.0 * (w * x + y * z)
-        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
-        roll = math.atan2(sinr_cosp, cosr_cosp)
-        # pitch (y-axis rotation)
-        sinp = 2.0 * (w * y - z * x)
-        if abs(sinp) >= 1.0:
-            pitch = math.copysign(math.pi / 2.0, sinp)
-        else:
-            pitch = math.asin(sinp)
-        # yaw (z-axis rotation)
-        siny_cosp = 2.0 * (w * z + x * y)
-        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-        yaw = math.atan2(siny_cosp, cosy_cosp)
-        return roll, pitch, yaw
+        return _quat_to_rpy(q)
 
     @staticmethod
     def _angle_diff(target: float, current: float) -> float:
-        diff = target - current
-        while diff > math.pi:
-            diff -= 2.0 * math.pi
-        while diff < -math.pi:
-            diff += 2.0 * math.pi
-        return diff
+        return _angle_diff(target, current)
 
     def _log_hints(self) -> None:
         import sys
@@ -2190,3 +2194,119 @@ class GripperCalibrationPolicy(HeuristicServoLiftPolicy):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "GripperCalibrationPolicy":
         return GripperCalibrationPolicy(GripperCalibrationPolicyArgs.from_cli_args(args))
+
+
+@dataclass
+class RotationalCalibrationPolicyArgs:
+    """Configuration for rotational action calibration."""
+
+    skill_hints: list[str] | None = None
+    calibration_axis: int = 5  # 3=roll, 4=pitch, 5=yaw
+    calibration_sign: float = 1.0
+    calibration_magnitude: float = 0.5
+    calibration_steps: int = 50
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "RotationalCalibrationPolicyArgs":
+        return cls(
+            skill_hints=getattr(args, "skill_hints", None),
+            calibration_axis=int(getattr(args, "calibration_axis", 5)),
+            calibration_sign=float(getattr(args, "calibration_sign", 1.0)),
+            calibration_magnitude=float(getattr(args, "calibration_magnitude", 0.5)),
+            calibration_steps=int(getattr(args, "calibration_steps", 50)),
+        )
+
+
+class RotationalCalibrationPolicy(PolicyBase):
+    """Fixed rotational-action calibration policy.
+
+    Commands a constant rotation on a single action axis and records the
+    resulting end-effector roll/pitch/yaw.  Used to determine which
+    action[3:6] axis maps to which world-frame rotation axis in relative mode.
+    """
+
+    name = "rotational_calibration"
+    config_class = RotationalCalibrationPolicyArgs
+
+    def __init__(self, config: RotationalCalibrationPolicyArgs):
+        super().__init__(config)
+        self._step = 0
+        self._axis = int(config.calibration_axis)
+        self._sign = float(config.calibration_sign)
+        self._magnitude = float(config.calibration_magnitude)
+        self._calibration_steps = int(config.calibration_steps)
+        self._episode_idx = 0
+        try:
+            if os.path.exists(_TRACE_PATH):
+                os.remove(_TRACE_PATH)
+        except Exception:
+            pass
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+
+        active = self._step < self._calibration_steps
+        if active:
+            action[..., self._axis] = self._sign * self._magnitude
+        # Keep gripper open/neutral.
+        if action.shape[-1] >= 7:
+            action[..., 6] = 1.0
+
+        # Record eef pose and orientation.
+        try:
+            eef_pos = None
+            eef_quat = None
+            scene = env.unwrapped.scene
+            if "ee_frame" in scene.keys():
+                data = scene["ee_frame"].data
+                for attr in ("target_pos_w", "source_pos_w", "pos_w"):
+                    if hasattr(data, attr):
+                        pos = getattr(data, attr).squeeze().to(device)
+                        if pos.ndim > 1:
+                            pos = pos[0]
+                        if pos.numel() >= 3:
+                            eef_pos = pos
+                            break
+                for attr in ("source_quat_w", "quat_w", "target_quat_w"):
+                    if hasattr(data, attr):
+                        quat = getattr(data, attr).squeeze().to(device)
+                        if quat.ndim > 1:
+                            quat = quat[0]
+                        if quat.numel() >= 4:
+                            eef_quat = quat
+                            break
+            if eef_pos is not None and eef_quat is not None:
+                roll, pitch, yaw = _quat_to_rpy(eef_quat)
+                _append_trace({
+                    "episode": self._episode_idx,
+                    "step": self._step,
+                    "eef_x": float(eef_pos[0].item()),
+                    "eef_y": float(eef_pos[1].item()),
+                    "eef_z": float(eef_pos[2].item()),
+                    "eef_roll": roll,
+                    "eef_pitch": pitch,
+                    "eef_yaw": yaw,
+                    "action_axis": self._axis,
+                    "action_sign": self._sign,
+                    "action_magnitude": self._magnitude,
+                    "action_value": float(action[..., self._axis].item()) if active else 0.0,
+                    "action_norm": float(torch.linalg.norm(action).item()),
+                })
+        except Exception:
+            pass
+
+        self._step += 1
+        return action
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        self._step = 0
+        self._episode_idx += 1
+
+    @staticmethod
+    def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        return parser
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "RotationalCalibrationPolicy":
+        return RotationalCalibrationPolicy(RotationalCalibrationPolicyArgs.from_cli_args(args))
