@@ -81,6 +81,54 @@ class HeuristicServoLiftPolicyArgs:
 
 
 @dataclass
+class HeuristicServoPickPolicyArgs(HeuristicServoLiftPolicyArgs):
+    """Configuration for HeuristicServoPickPolicy.
+
+    Adds explicit post-lift alignment and hold phases for pick/place-style
+    tasks where the object must be positioned at a command target and held.
+    """
+
+    enable_align_phase: bool = True
+    align_kp: float = 0.6
+    final_align_speed: float = 0.4
+    hold_steps: int = 20
+    align_height_offset: float = 0.0
+    settle_before_success: bool = True
+    near_target_gain: float = 0.5
+    align_max_delta: float | None = 0.06
+    slow_align_max_delta: float | None = 0.03
+    align_horizontal_scale: float = 1.0
+    slow_align_threshold: float = 0.05
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoPickPolicyArgs":
+        return cls(skill_hints=getattr(args, "skill_hints", None))
+
+
+@dataclass
+class HeuristicServoLiftPolicyArgs:
+    """Configuration for HeuristicServoLiftPolicy."""
+
+    skill_hints: list[str] | None = None
+    approach_offset_z: float = 0.08
+    grasp_offset_z: float = 0.0
+    lift_height: float = 0.25
+    kp: float = 5.0
+    grasp_dist_threshold: float = 0.03
+    gripper_close_threshold: float = 0.03
+    min_grasp_steps: int = 15
+    approach_horizontal_threshold: float = 0.05
+    max_state_steps: int = 300
+    success_threshold: float = 0.05
+    grasp_squeeze_steps: int = 0
+    lift_max_delta: float | None = None
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoLiftPolicyArgs":
+        return cls(skill_hints=getattr(args, "skill_hints", None))
+
+
+@dataclass
 class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     """Configuration for HeuristicServoGoalPosePolicy.
 
@@ -724,14 +772,26 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if "release_at_target" in self._skill_hints:
             self._release_at_target = True
             self._min_release_steps += 5
-        if "orient_adjust" in self._skill_hints:
+        if "orient_adjust" in self._skill_hints or "orientation_aware_grasp" in self._skill_hints:
             self._require_orientation_alignment = True
             self._orientation_threshold *= 0.8
-        if "stabilize_lift" in self._skill_hints:
+        if "two_stage_reorientation" in self._skill_hints:
+            self._require_orientation_alignment = True
+            self._orientation_threshold *= 0.7
+        if "stabilize_lift" in self._skill_hints or "reduce_xy_motion" in self._skill_hints:
             if self._align_max_delta is not None:
                 self._align_max_delta *= 0.75
             else:
                 self._align_max_delta = 0.06
+            self._lift_horizontal_scale = max(0.0, self._lift_horizontal_scale - 0.2)
+            self._lift_kp_multiplier *= 0.9
+        if "longer_squeeze" in self._skill_hints or "longer_gripper_close" in self._skill_hints:
+            self._min_grasp_steps += 5
+            self._grasp_squeeze_steps += 10
+            self._gripper_close_threshold *= 0.8
+        if "maintain_grip_force" in self._skill_hints:
+            self._min_grasp_steps += 3
+            self._grasp_squeeze_steps += 5
 
     def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
         device = torch.device(env.unwrapped.device)
@@ -786,8 +846,12 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
 
         elif self._state == "GRASP":
             action = self._set_gripper(action, open=False)
+            squeeze_deadline = self._min_grasp_steps + self._grasp_squeeze_steps
             if self._state_step >= self._min_grasp_steps:
-                self._transition("LIFT")
+                if gripper_pos is not None and gripper_pos < self._gripper_close_threshold:
+                    self._transition("LIFT")
+                elif self._state_step >= squeeze_deadline:
+                    self._transition("LIFT")
 
         elif self._state == "LIFT":
             if target_pos is not None:
@@ -1047,6 +1111,253 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "HeuristicServoGoalPosePolicy":
         return HeuristicServoGoalPosePolicy(HeuristicServoGoalPosePolicyArgs.from_cli_args(args))
+
+
+class HeuristicServoPickPolicy(HeuristicServoLiftPolicy):
+    """Closed-loop servo heuristic for pick/place tasks with post-lift alignment.
+
+    Extends the lift state machine with explicit ALIGN, SLOW_ALIGN, and
+    HOLD_AT_TARGET phases.  After lifting to the command target height the
+    policy moves horizontally to the target, slows down as it approaches, and
+    then holds the object at the target for a configurable number of steps.
+    This addresses the ``target_not_reached_after_lift`` success gap observed
+    on ``pick_object``.
+    """
+
+    name = "heuristic_servo_pick"
+    config_class = HeuristicServoPickPolicyArgs
+
+    def __init__(self, config: HeuristicServoPickPolicyArgs):
+        super().__init__(config)
+        self._enable_align_phase = config.enable_align_phase
+        self._align_kp = config.align_kp
+        self._final_align_speed = config.final_align_speed
+        self._hold_steps = config.hold_steps
+        self._align_height_offset = config.align_height_offset
+        self._settle_before_success = config.settle_before_success
+        self._near_target_gain = config.near_target_gain
+        self._align_max_delta = config.align_max_delta
+        self._slow_align_max_delta = config.slow_align_max_delta
+        self._align_horizontal_scale = config.align_horizontal_scale
+        self._slow_align_threshold = config.slow_align_threshold
+
+        # Signature-driven hint effects.
+        if "precision_target_tracking" in self._skill_hints:
+            self._align_kp *= 1.2
+            self._success_threshold = max(0.03, self._success_threshold * 0.8)
+        if "slow_final_align" in self._skill_hints:
+            self._final_align_speed *= 0.6
+            if self._align_max_delta is not None:
+                self._align_max_delta *= 0.7
+            if self._slow_align_max_delta is not None:
+                self._slow_align_max_delta *= 0.7
+        if "hold_at_target" in self._skill_hints:
+            self._hold_steps += 15
+        if "reduce_near_target_gain" in self._skill_hints:
+            self._near_target_gain *= 0.6
+        if "settle_before_success_check" in self._skill_hints:
+            self._settle_before_success = True
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        step = self._step
+        self._step += 1
+        self._state_step += 1
+
+        if step == 0 and self._skill_hints:
+            self._log_hints()
+
+        if self._relative_mode is None:
+            self._infer_controller_mode(env)
+
+        eef_pos, eef_quat, object_pos, gripper_pos, target_pos = self._extract_state(observation, env, device)
+
+        if object_pos is None:
+            # Fallback open-loop sequence when observation is missing.
+            if step < 50:
+                action[..., 2] = -0.04
+                action = self._set_gripper(action, open=True)
+            else:
+                action[..., 2] = 0.04
+                action = self._set_gripper(action, open=False)
+            return action
+
+        if self._state == "APPROACH":
+            target = object_pos.clone()
+            target[2] += self._approach_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            horiz = torch.norm(object_pos[:2] - eef_pos[:2])
+            z_err = abs(eef_pos[2] - target[2])
+            if horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5:
+                self._transition("DESCEND")
+
+        elif self._state == "DESCEND":
+            target = object_pos.clone()
+            target[2] += self._grasp_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            if torch.norm(target - eef_pos) < self._grasp_dist_threshold:
+                self._transition("GRASP")
+
+        elif self._state == "GRASP":
+            action = self._set_gripper(action, open=False)
+            squeeze_deadline = self._min_grasp_steps + self._grasp_squeeze_steps
+            if self._state_step >= self._min_grasp_steps:
+                if gripper_pos is not None and gripper_pos < self._gripper_close_threshold:
+                    self._transition("LIFT")
+                elif self._state_step >= squeeze_deadline:
+                    self._transition("LIFT")
+
+        elif self._state == "LIFT":
+            if target_pos is not None:
+                target = target_pos.clone()
+                target[2] += self._lift_height
+                if object_pos is not None:
+                    target[:2] = object_pos[:2]
+            else:
+                target = object_pos.clone()
+                target[2] += self._lift_height
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._lift_kp_multiplier,
+                horizontal_scale=self._lift_horizontal_scale,
+                max_delta=self._lift_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+            height_ok = eef_pos[2] >= target[2] - 0.03
+            if self._enable_align_phase and target_pos is not None:
+                if height_ok:
+                    self._transition("ALIGN")
+            elif height_ok:
+                self._transition("HOLD")
+
+        elif self._state == "ALIGN":
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._align_height_offset
+            horizontal_dist = torch.norm(target[:2] - object_pos[:2]) if object_pos is not None else torch.norm(target[:2] - eef_pos[:2])
+            # Reduce gain when very close to avoid overshoot.
+            kp = self._align_kp * (self._near_target_gain if horizontal_dist < self._slow_align_threshold else 1.0)
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=kp,
+                horizontal_scale=self._align_horizontal_scale,
+                max_delta=self._align_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+            if horizontal_dist < self._success_threshold:
+                if self._settle_before_success:
+                    self._transition("SLOW_ALIGN")
+                else:
+                    self._transition("HOLD_AT_TARGET")
+
+        elif self._state == "SLOW_ALIGN":
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._align_height_offset
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._align_kp * self._near_target_gain,
+                horizontal_scale=self._align_horizontal_scale,
+                max_delta=self._slow_align_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+            if self._state_step >= max(1, int(self._hold_steps * 0.25)):
+                self._transition("HOLD_AT_TARGET")
+
+        elif self._state == "HOLD_AT_TARGET":
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._align_height_offset
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._align_kp * self._near_target_gain,
+                horizontal_scale=self._align_horizontal_scale,
+                max_delta=self._slow_align_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+            if self._state_step >= self._hold_steps:
+                self._transition("VERIFY_SUCCESS")
+
+        elif self._state == "VERIFY_SUCCESS":
+            # Keep the object at the target and let the environment register success.
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._align_height_offset
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._align_kp * self._near_target_gain,
+                horizontal_scale=self._align_horizontal_scale,
+                max_delta=self._slow_align_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+
+        elif self._state == "HOLD":
+            action = self._set_gripper(action, open=False)
+
+        if self._state_step > self._max_state_steps:
+            self._transition("HOLD")
+
+        if object_pos is not None:
+            _append_trace({
+                "episode": self._episode_idx,
+                "step": step,
+                "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
+                "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "object_x": float(object_pos[0].item()),
+                "object_y": float(object_pos[1].item()),
+                "object_z": float(object_pos[2].item()),
+                "target_x": float(target_pos[0].item()) if target_pos is not None else None,
+                "target_y": float(target_pos[1].item()) if target_pos is not None else None,
+                "target_z": float(target_pos[2].item()) if target_pos is not None else None,
+                "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
+                "action_norm": float(torch.linalg.norm(action).item()),
+                "phase": self._state,
+            })
+
+        return action
+
+    def _log_hints(self) -> None:
+        import sys
+        print(f"[HEURISTIC_SKILL_HINTS] consumed: {sorted(self._skill_hints)}", file=sys.stderr)
+        print(
+            f"[HEURISTIC_SKILL_HINTS] params: approach_z={self._approach_offset_z:.4f} "
+            f"grasp_z={self._grasp_offset_z:.4f} lift_h={self._lift_height:.4f} "
+            f"align_kp={self._align_kp:.4f} align_max_delta={self._align_max_delta} "
+            f"hold_steps={self._hold_steps} settle={self._settle_before_success}",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "HeuristicServoPickPolicy":
+        return HeuristicServoPickPolicy(HeuristicServoPickPolicyArgs.from_cli_args(args))
 
 
 class CheatLiftPolicy(PolicyBase):

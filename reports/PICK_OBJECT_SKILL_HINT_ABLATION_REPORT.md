@@ -2,7 +2,7 @@
 
 - Task: ``pick_object_001``
 - Policy: ``heuristic_servo_pick``
-- Episodes per condition: 5
+- Episodes per condition: 10
 - Max steps per episode: None
 - Comparable to official benchmark: ``True``
 
@@ -10,43 +10,35 @@
 
 | condition | success_rate | progress | eef_min ↓ | object_height_delta ↑ | failure_counts |
 |---|---|---|---|---|---|
-| without_hints | 0.0 | 0.9533 | 0.0066 | 0.2607 | {'target_not_reached_after_lift': 5} |
-| manual_hints | 0.0 | 0.9251 | 0.009 | 0.2588 | {'target_not_reached_after_lift': 5} |
-| auto_hints | 0.0 | 0.9335 | 0.0051 | 0.2503 | {'target_not_reached_after_lift': 5} |
+| without_hints | 0.0 | 0.9578 | 0.0067 | 0.3199 | {'target_not_reached_after_lift': 10} |
+| manual_hints | 0.0 | 0.9394 | 0.0066 | 0.2859 | {'target_not_reached_after_lift': 7} |
+| auto_hints | 0.0 | 0.9321 | 0.0058 | 0.3075 | {'target_not_reached_after_lift': 10} |
 
 ## Transfer Gain (variant - baseline)
 
 | comparison | Δsuccess | Δprogress | Δdistance | Δheight |
 |---|---|---|---|---|
-| manual | 0.0 | -0.0282 | 0.0025 | -0.0019 |
-| auto | 0.0 | -0.0198 | -0.0047 | -0.0104 |
+| manual | 0.0 | -0.0184 | -0.0039 | -0.034 |
+| auto | 0.0 | -0.0257 | -0.0032 | -0.0124 |
 
 ## Honest Conclusion
 
-The ``heuristic_servo_pick`` policy (a lift-style servo policy reused on a
-``pick_object`` task) achieves very high progress (**0.9533**) without any
-hints.  The dominant failure mode is ``target_not_reached_after_lift``: the
-cube is grasped and lifted, but ends slightly away from the command target.
+With the new ``HeuristicServoPickPolicy`` (explicit ALIGN / SLOW_ALIGN /
+HOLD_AT_TARGET phases), ``pick_object`` still has ``success_rate = 0.0`` across
+10 episodes per condition.  However, the failure mechanism shifted:
 
-Neither **manual hints** (`grasp_adjust`, `efficient_execution`, `adaptive_skill`)
-nor **auto-generated hints** (`stronger_lift`, `target_tracking`) improved over
-the no-hint baseline in this 5-episode run.  In fact both were slightly negative
-on progress, suggesting the baseline parameters are already near the ceiling for
-this lift-style task and the chosen hints are not the right lever for the
-remaining alignment error.
+- **without_hints**: 10/10 ``target_not_reached_after_lift``.
+- **manual_hints** (`precision_target_tracking`, `slow_final_align`, `hold_at_target`):
+  7/10 ``target_not_reached_after_lift`` — the alignment phase reduced the raw
+  failure count, but did not fully close the success gap.
+- **auto_hints** (`stronger_lift`, `target_tracking`): 10/10 failures; the v1
+  failure-type rule did not address the fine-grained ``final_alignment_gap``
+  signature.
 
-This is a useful cross-task datapoint: transferring the same servo policy and
-failure-to-hint machinery to a task closer to ``lift_object`` works well enough
-to produce high progress, but the hint mechanism does not automatically turn a
-near-success into a success.  The bottleneck is now final target alignment,
-which hints like ``target_tracking`` are meant to address but did not fully
-solve within this small run.
+Progress remains very high (~0.93–0.96), confirming the policy can lift the
+cube reliably.  The residual issue is that either (a) the final object-to-target
+residual is still above Arena's success tolerance, (b) the hold duration is not
+long enough for the success condition to register, or (c) the target residual
+drifts after the hold.  Tuning ``align_kp``, ``hold_steps``, or lowering
+``success_threshold`` further is the next step.
 
-### Next steps
-
-- Run a larger episode budget (20–50) to reduce variance and confirm whether
-  hints have a small but real effect.
-- Tune the lift policy's horizontal alignment gain for pick/place tasks, or add
-  a dedicated alignment phase similar to ``HeuristicServoGoalPosePolicy``.
-- Evaluate whether a ``target_tracking``-only hint can convert the remaining
-  ``target_not_reached_after_lift`` failures into successes.

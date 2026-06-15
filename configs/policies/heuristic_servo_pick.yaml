@@ -1,5 +1,5 @@
 policy_id: heuristic_servo_pick
-type: heuristic_servo_lift
+type: heuristic_servo_pick
 strength: 0.8
 memory_bonus: 0.0
 policy_config_dict:
@@ -15,3 +15,10 @@ policy_config_dict:
   max_state_steps: 300
   success_threshold: 0.05
   lift_max_delta: 0.15
+  enable_align_phase: true
+  align_kp: 0.6
+  final_align_speed: 0.4
+  hold_steps: 20
+  align_max_delta: 0.06
+  slow_align_max_delta: 0.03
+  near_target_gain: 0.5

@@ -1,0 +1,99 @@
+version: 0.2.0
+
+rules:
+  - name: precision_alignment_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - lifted_but_not_aligned
+      - high_progress_zero_success
+      - final_alignment_gap
+    hints:
+      - precision_target_tracking
+      - slow_final_align
+      - hold_at_target
+    parameter_overrides:
+      align_kp: 0.6
+      final_align_speed: 0.4
+      hold_steps: 20
+    confidence: 0.75
+    rationale: "Object is lifted and progress is high, but final target residual prevents success."
+    expected_effect: "Reduce final target residual after lift."
+
+  - name: unstable_grasp_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - unstable_grasp
+      - lifted_then_dropped
+      - grasped_but_not_lifted
+    hints:
+      - longer_squeeze
+      - maintain_grip_force
+      - stabilize_lift
+      - reduce_xy_motion
+    parameter_overrides:
+      squeeze_steps: 25
+      grip_hold_strength: 1.0
+      lift_xy_gain: 0.3
+    confidence: 0.75
+    rationale: "Object is reached or lifted but grip is unstable."
+    expected_effect: "Reduce drop rate and increase held duration."
+
+  - name: object_not_lifted_after_grasp_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - reached_but_not_grasped
+      - grasped_but_not_lifted
+    hints:
+      - lower_grasp_height
+      - longer_squeeze
+      - grasp_adjust
+    parameter_overrides:
+      grasp_offset_z: 0.035
+      squeeze_steps: 25
+    confidence: 0.7
+    rationale: "End-effector reached object but object was not lifted."
+    expected_effect: "Improve grasp contact and lift initiation."
+
+  - name: orientation_gap_recipe
+    source: auto_rule
+    hint_level: skill_candidate
+    trigger_tags:
+      - orientation_gap
+    hints:
+      - orientation_aware_grasp
+      - orient_adjust
+      - two_stage_reorientation
+    parameter_overrides:
+      orient_kp: 0.5
+      rotate_before_lift: true
+    confidence: 0.65
+    rationale: "Pose/orientation target is not satisfied."
+    expected_effect: "Reduce orientation residual."
+
+  - name: not_reached_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - not_reached
+    hints:
+      - faster_approach
+      - larger_servo_gain
+    parameter_overrides:
+      approach_kp_multiplier: 1.3
+    confidence: 0.6
+    rationale: "End-effector did not reach the object within the episode."
+    expected_effect: "Decrease approach time and distance."
+
+  - name: policy_noop_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - policy_noop
+    hints:
+      - action_activation_check
+    confidence: 0.9
+    rationale: "Policy produced near-zero actions."
+    expected_effect: "Restore non-zero action output."

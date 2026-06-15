@@ -993,6 +993,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "heuristic_policy.HeuristicLiftPolicy"
             if policy_type == "heuristic_servo_lift":
                 policy_type = "heuristic_policy.HeuristicServoLiftPolicy"
+            if policy_type == "heuristic_servo_pick":
+                policy_type = "heuristic_policy.HeuristicServoPickPolicy"
             if policy_type == "heuristic_servo_goal_pose":
                 policy_type = "heuristic_policy.HeuristicServoGoalPosePolicy"
             if policy_type == "cheat_lift":

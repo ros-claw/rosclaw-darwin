@@ -10,41 +10,35 @@
 
 | condition | success_rate | progress | eef_min ↓ | object_height_delta ↑ | failure_counts |
 |---|---|---|---|---|---|
-| without_hints | 0.0 | 0.4895 | 0.0043 | -0.1564 | {'object_not_lifted': 5} |
-| manual_hints | 0.0 | 0.5173 | 0.0046 | -0.0797 | {'object_not_lifted': 3, 'target_not_reached_after_lift': 2} |
-| auto_hints | 0.0 | 0.4733 | 0.0091 | -0.1518 | {'object_not_lifted': 5} |
+| without_hints | 0.0 | 0.4741 | 0.0097 | -0.1616 | {'object_not_lifted': 5} |
+| manual_hints | 0.0 | 0.4526 | 0.0159 | -0.1612 | {'object_not_lifted': 5} |
+| auto_hints | 0.0 | 0.4895 | 0.0044 | -0.1262 | {'object_not_lifted': 5} |
 
 ## Transfer Gain (variant - baseline)
 
 | comparison | Δsuccess | Δprogress | Δdistance | Δheight |
 |---|---|---|---|---|
-| manual | 0.0 | 0.0278 | 0.2279 | 0.0767 |
-| auto | 0.0 | -0.0162 | -0.0398 | 0.0046 |
+| manual | 0.0 | -0.0215 | -0.0156 | 0.0004 |
+| auto | 0.0 | 0.0154 | 0.0035 | 0.0354 |
 
 ## Honest Conclusion
 
-The improved ``heuristic_servo_goal_pose`` policy still reaches a transient pose
-close to the fixed target, but the cube remains difficult to hold in mid-air.
-Across 5 episodes/condition:
+This run tested the squeeze/stabilize intervention on ``goal_pose``:
 
-- **Manual hints** (`target_tracking`, `efficient_execution`, `precision_placement`)
-  produced a measurable progress gain (Δprogress = **+0.028**) and increased the
-  object-height delta (Δheight = **+0.077**), but did not eliminate the drop.
-- **Auto-generated hints** from the dominant ``object_not_lifted`` failure
-  (`longer_gripper_close`, `stronger_lift`, `stabilize_lift`) did not help in
-  this run (Δprogress = **-0.016**), suggesting the generated hints are not yet
-  reliably matched to the true failure mode.
+- **without_hints**: progress 0.4741, ``object_not_lifted``: 5/5.
+- **manual_hints** (`longer_gripper_close`, `stabilize_lift`, `orient_adjust`):
+  progress 0.4526, ``object_not_lifted``: 5/5.
+- **auto_hints**: progress 0.4895, ``object_not_lifted``: 5/5.
 
-The failure-to-hint pipeline itself continues to work cross-task: Loop 1
-failures are mapped to hints and injected into Loop 2.  The positive manual-hint
-gain shows there is headroom on ``goal_pose``, but auto-hint generation needs
-better grasp-stability rules (or a different grasping strategy) to close the gap.
+The manual grasp-stability hints did **not** improve progress in this 5-episode
+run; auto hints were slightly better on progress (+0.015) but still left all
+episodes in ``object_not_lifted``.  The squeeze logic was consumed (gripper
+closed longer), but it was not sufficient to hold the cube during the
+reorientation lift.
 
-### Next steps
+This suggests the grasp stability bottleneck is deeper than squeeze duration
+alone: it may require orientation-aware grasp pose, a different grip force
+profile, lower lift acceleration, or a two-stage reorientation strategy.  A
+larger episode budget and additional parameter tuning are needed before drawing
+a definitive conclusion.
 
-- Keep iterating on grasp stability (e.g. longer squeeze, lower close threshold,
-  orientation-aware grasp, or a two-stage squeeze-and-hold policy).
-- Add a failure-to-hint rule that specifically targets mid-air drops after a
-  transient success, and test whether it outperforms the current
-  ``object_not_lifted`` rule.
-- Consider ``pick_object`` as a more transfer-friendly second task.
