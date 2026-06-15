@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -74,6 +75,34 @@ class HeuristicServoLiftPolicyArgs:
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoLiftPolicyArgs":
+        return cls(skill_hints=getattr(args, "skill_hints", None))
+
+
+@dataclass
+class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
+    """Configuration for HeuristicServoGoalPosePolicy.
+
+    Extends the lift servo args with placement/release behaviour needed for
+    goal-pose / pick-and-place tasks.
+    """
+
+    min_release_steps: int = 10
+    align_height_offset: float = 0.0
+    orientation_threshold: float = 1.0
+    lift_horizontal_scale: float = 0.9
+    lift_kp_multiplier: float = 1.0
+    lift_max_delta: float | None = None
+    align_horizontal_scale: float = 1.0
+    align_kp_multiplier: float = 1.0
+    align_max_delta: float | None = None
+    grasp_z_tolerance: float = 0.02
+    fixed_target_pos: list[float] | None = None
+    fixed_target_quat: list[float] | None = None
+    release_at_target: bool = False
+    require_orientation_alignment: bool = False
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoGoalPosePolicyArgs":
         return cls(skill_hints=getattr(args, "skill_hints", None))
 
 
@@ -198,8 +227,8 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._approach_horizontal_threshold = config.approach_horizontal_threshold
         self._max_state_steps = config.max_state_steps
         self._success_threshold = config.success_threshold
-        self._lift_kp_multiplier = 1.0
-        self._lift_horizontal_scale = 0.6
+        self._lift_kp_multiplier = getattr(config, "lift_kp_multiplier", 1.0)
+        self._lift_horizontal_scale = getattr(config, "lift_horizontal_scale", 0.6)
 
         if "efficient_execution" in self._skill_hints:
             self._kp *= 1.5
@@ -360,6 +389,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
         target: torch.Tensor,
         kp_multiplier: float = 1.0,
         horizontal_scale: float = 1.0,
+        max_delta: float | None = None,
     ) -> None:
         """Write a position (and orientation) command into ``action[..., :3]``."""
         if eef_pos is None:
@@ -370,7 +400,8 @@ class HeuristicServoLiftPolicy(PolicyBase):
         # In relative mode we want to saturate the action to maximize step size
         # (the controller is heavily damped). In absolute mode keep steps small
         # so mock/unit-test environments remain stable.
-        max_delta = 0.5 if self._relative_mode else 0.1
+        if max_delta is None:
+            max_delta = 0.5 if self._relative_mode else 0.1
         delta = torch.clamp(delta, -max_delta, max_delta)
 
         if self._relative_mode:
@@ -445,35 +476,50 @@ class HeuristicServoLiftPolicy(PolicyBase):
 
         The command manager stores targets in the robot root frame; Arena's
         success criterion compares object world position to the world-frame goal.
+        Different tasks name the command term differently, so we try a list of
+        common names and fall back to the raw task observation buffer.
         """
+        root_pos, root_quat = None, None
+        for cmd_name in ("object_pose", "pose_command", "target_pose"):
+            try:
+                cm = env.unwrapped.command_manager
+                cmd = cm.get_command(cmd_name)
+                t = torch.as_tensor(cmd, device=device).squeeze()
+                if t.numel() < 3:
+                    continue
+                des_pos_b = t[:3]
+                if root_pos is None:
+                    root_pos, root_quat = self._extract_robot_root(env, device)
+                if root_pos is not None and root_quat is not None:
+                    from isaaclab.utils.math import combine_frame_transforms
+                    target_w, _ = combine_frame_transforms(
+                        root_pos.unsqueeze(0),
+                        root_quat.unsqueeze(0),
+                        des_pos_b.unsqueeze(0),
+                    )
+                    return target_w.squeeze()
+            except Exception:
+                continue
+
+        # Fallback: read task_obs from the env's internal observation buffer.
         try:
-            cm = env.unwrapped.command_manager
-            cmd = cm.get_command("object_pose")
-            des_pos_b = torch.as_tensor(cmd, device=device).squeeze()[:3]
-            root_pos, root_quat = self._extract_robot_root(env, device)
-            if root_pos is not None and root_quat is not None:
-                from isaaclab.utils.math import combine_frame_transforms
-                target_w, _ = combine_frame_transforms(
-                    root_pos.unsqueeze(0), root_quat.unsqueeze(0), des_pos_b.unsqueeze(0)
-                )
-                return target_w.squeeze()
+            obs_buf = getattr(env, "_obs_buf", None) or getattr(env.unwrapped, "_obs_buf", None)
+            if isinstance(obs_buf, dict) and "task_obs" in obs_buf:
+                task_obs = obs_buf["task_obs"]
+            elif isinstance(observation, dict):
+                task_obs = observation.get("task_obs")
+            else:
+                task_obs = None
+            if task_obs is not None:
+                if hasattr(task_obs, "squeeze"):
+                    task_obs = task_obs.squeeze()
+                t = self._to_tensor(task_obs, device)
+                if t is not None and t.numel() >= 3:
+                    return t[:3].squeeze()
         except Exception:
             pass
 
-        # Fallback: task_obs stores the base-frame command; if the robot base is
-        # near the world origin this is a reasonable approximation.
-        try:
-            if not isinstance(observation, dict):
-                return None
-            task_obs = observation.get("task_obs")
-            if task_obs is None:
-                return None
-            t = self._to_tensor(task_obs, device)
-            if t is None or t.numel() < 3:
-                return None
-            return t[:3].squeeze()
-        except Exception:
-            return None
+        return None
 
     def _extract_robot_root(
         self, env: gym.Env, device: torch.device
@@ -619,6 +665,360 @@ class HeuristicServoLiftPolicy(PolicyBase):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "HeuristicServoLiftPolicy":
         return HeuristicServoLiftPolicy(HeuristicServoLiftPolicyArgs.from_cli_args(args))
+
+
+class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
+    """Closed-loop servo heuristic for goal-pose / reorientation tasks.
+
+    Reuses the lift state machine through ``GRASP`` and ``LIFT``, then aligns
+    the grasped object with the command target pose, releases the gripper, and
+    holds. Works with the absolute-pose Franka IK controller configured by
+    ``ArenaAdapter``.
+    """
+
+    name = "heuristic_servo_goal_pose"
+    config_class = HeuristicServoGoalPosePolicyArgs
+
+    def __init__(self, config: HeuristicServoGoalPosePolicyArgs):
+        super().__init__(config)
+        self._min_release_steps = config.min_release_steps
+        self._align_height_offset = config.align_height_offset
+        self._orientation_threshold = config.orientation_threshold
+        self._grasp_z_tolerance = getattr(config, "grasp_z_tolerance", 0.02)
+        self._fixed_target_pos = config.fixed_target_pos
+        self._fixed_target_quat = config.fixed_target_quat
+        self._release_at_target = config.release_at_target
+        self._require_orientation_alignment = config.require_orientation_alignment
+        self._align_horizontal_scale = config.align_horizontal_scale
+        self._align_kp_multiplier = config.align_kp_multiplier
+        self._lift_max_delta = config.lift_max_delta
+        self._align_max_delta = config.align_max_delta
+
+        # Goal-pose specific hint effects.
+        if "precision_placement" in self._skill_hints:
+            self._success_threshold = max(0.03, self._success_threshold * 0.8)
+            self._kp *= 0.9
+        if "release_at_target" in self._skill_hints:
+            self._release_at_target = True
+            self._min_release_steps += 5
+        if "orient_adjust" in self._skill_hints:
+            self._require_orientation_alignment = True
+            self._orientation_threshold *= 0.8
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        step = self._step
+        self._step += 1
+        self._state_step += 1
+
+        if step == 0 and self._skill_hints:
+            self._log_hints()
+
+        if self._relative_mode is None:
+            self._infer_controller_mode(env)
+
+        eef_pos, eef_quat, object_pos, gripper_pos, target_pos = self._extract_state(observation, env, device)
+        target_quat = self._extract_target_quat_world(observation, env, device)
+        if target_pos is None and self._fixed_target_pos is not None and object_pos is not None:
+            target_pos = torch.as_tensor(self._fixed_target_pos, device=device, dtype=object_pos.dtype)
+        if target_quat is None and self._fixed_target_quat is not None:
+            dtype = eef_quat.dtype if eef_quat is not None else torch.float32
+            target_quat = torch.as_tensor(self._fixed_target_quat, device=device, dtype=dtype)
+
+        if object_pos is None:
+            # Fallback open-loop sequence when observations are missing.
+            if step < 50:
+                action[..., 2] = -0.04
+                action = self._set_gripper(action, open=True)
+            else:
+                action[..., 2] = 0.04
+                action = self._set_gripper(action, open=False)
+            return action
+
+        if self._state == "APPROACH":
+            target = object_pos.clone()
+            target[2] += self._approach_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            horiz = torch.norm(object_pos[:2] - eef_pos[:2])
+            z_err = abs(eef_pos[2] - target[2])
+            if horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5:
+                self._transition("DESCEND")
+
+        elif self._state == "DESCEND":
+            target = object_pos.clone()
+            target[2] += self._grasp_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            dist_ok = torch.norm(target - eef_pos) < self._grasp_dist_threshold
+            z_ok = abs(eef_pos[2].item() - target[2].item()) < self._grasp_z_tolerance
+            if dist_ok and z_ok:
+                self._transition("GRASP")
+
+        elif self._state == "GRASP":
+            action = self._set_gripper(action, open=False)
+            if self._state_step >= self._min_grasp_steps:
+                self._transition("LIFT")
+
+        elif self._state == "LIFT":
+            if target_pos is not None:
+                # Lift vertically toward the target height first; keep the
+                # horizontal position over the object so the grasp is not sheared.
+                target = target_pos.clone()
+                target[2] += self._lift_height
+                if object_pos is not None:
+                    target[:2] = object_pos[:2]
+            else:
+                target = object_pos.clone()
+                target[2] += self._lift_height
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._lift_kp_multiplier,
+                horizontal_scale=self._lift_horizontal_scale,
+                max_delta=self._lift_max_delta,
+            )
+            action = self._set_gripper(action, open=False)
+            # Transition when high enough; horizontal/rotational alignment is
+            # handled in ALIGN to avoid dragging the object during lift.
+            height_ok = eef_pos[2] >= target[2] - 0.03
+            if target_pos is not None and object_pos is not None:
+                near_target_xy = (
+                    torch.norm(target_pos[:2] - object_pos[:2]) < self._success_threshold * 2
+                )
+            else:
+                near_target_xy = True
+            if height_ok and near_target_xy:
+                self._transition("ALIGN")
+
+        elif self._state == "ALIGN":
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._align_height_offset
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._align_kp_multiplier,
+                horizontal_scale=self._align_horizontal_scale,
+                max_delta=self._align_max_delta,
+            )
+            self._apply_orientation(action, eef_quat, target_quat)
+            action = self._set_gripper(action, open=False)
+            # Require the object (not just the eef) to be at the target before
+            # declaring alignment, otherwise a fast eef motion can leave the
+            # object behind or cause it to slip.
+            if target_pos is not None and object_pos is not None:
+                position_ok = torch.norm(target - object_pos) < self._success_threshold
+            else:
+                position_ok = torch.norm(target - eef_pos) < self._success_threshold
+            orientation_ok = (
+                self._orientation_aligned(eef_quat, target_quat)
+                or not self._require_orientation_alignment
+            )
+            if position_ok and orientation_ok:
+                if self._release_at_target:
+                    self._transition("RELEASE")
+                else:
+                    self._transition("HOLD")
+
+        elif self._state == "RELEASE":
+            action = self._set_gripper(action, open=True)
+            if self._state_step >= self._min_release_steps:
+                self._transition("HOLD")
+
+        elif self._state == "HOLD":
+            # Goal-pose tasks normally keep the object grasped at the target pose.
+            # Only open the gripper if an explicit release was requested/scheduled.
+            if self._release_at_target:
+                action = self._set_gripper(action, open=True)
+            else:
+                action = self._set_gripper(action, open=False)
+
+        if self._state_step > self._max_state_steps:
+            self._transition("HOLD")
+
+        if object_pos is not None:
+            _append_trace({
+                "episode": self._episode_idx,
+                "step": step,
+                "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
+                "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "object_x": float(object_pos[0].item()),
+                "object_y": float(object_pos[1].item()),
+                "object_z": float(object_pos[2].item()),
+                "target_x": float(target_pos[0].item()) if target_pos is not None else None,
+                "target_y": float(target_pos[1].item()) if target_pos is not None else None,
+                "target_z": float(target_pos[2].item()) if target_pos is not None else None,
+                "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
+                "action_norm": float(torch.linalg.norm(action).item()),
+                "phase": self._state,
+            })
+
+        return action
+
+    def _apply_position(
+        self,
+        action: torch.Tensor,
+        eef_pos: torch.Tensor | None,
+        eef_quat: torch.Tensor | None,
+        target: torch.Tensor,
+        kp_multiplier: float = 1.0,
+        horizontal_scale: float = 1.0,
+        max_delta: float | None = None,
+    ) -> None:
+        """Write a position command into ``action`` using body-frame mapping.
+
+        The cube_goal_pose environment leaves the Franka controller in relative
+        mode with the end-effector yawed ~180° at reset. World-frame deltas must
+        be rotated into the end-effector body frame before being written as
+        relative-pose actions; otherwise the arm moves away from the object.
+        """
+        if eef_pos is None:
+            return
+        delta_world = self._kp * kp_multiplier * (target - eef_pos)
+        if horizontal_scale != 1.0:
+            delta_world[:2] *= horizontal_scale
+
+        if max_delta is None:
+            max_delta = 0.5 if self._relative_mode else 0.1
+        delta_world = torch.clamp(delta_world, -max_delta, max_delta)
+
+        if self._relative_mode:
+            body_delta = self._world_delta_to_body(delta_world, eef_quat)
+            cmd = body_delta / self._action_scale
+            action[..., :3] = torch.clamp(cmd, -1.0, 1.0)
+            if action.shape[-1] >= 6:
+                action[..., 3:6] = 0.0
+        else:
+            action[..., :3] = eef_pos + delta_world
+            if action.shape[-1] >= 7:
+                quat = (
+                    eef_quat
+                    if eef_quat is not None and eef_quat.numel() >= 4
+                    else torch.tensor([0.0, 0.0, 0.0, 1.0], device=action.device, dtype=action.dtype)
+                )
+                action[..., 3:7] = quat[:4]
+
+    def _world_delta_to_body(
+        self, delta_world: torch.Tensor, eef_quat: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Rotate a world-frame delta into the end-effector body frame."""
+        if eef_quat is None or eef_quat.numel() < 4:
+            return delta_world
+        try:
+            from isaaclab.utils.math import quat_rotate_inverse
+
+            return quat_rotate_inverse(eef_quat.unsqueeze(0), delta_world.unsqueeze(0)).squeeze()
+        except Exception:
+            return delta_world
+
+    def _extract_target_quat_world(
+        self, observation: GymSpacesDict, env: gym.Env, device: torch.device
+    ) -> torch.Tensor | None:
+        """Read the command target quaternion and transform it to the world frame."""
+        root_pos, root_quat = None, None
+        for cmd_name in ("object_pose", "pose_command", "target_pose"):
+            try:
+                cm = env.unwrapped.command_manager
+                cmd = cm.get_command(cmd_name)
+                cmd_t = torch.as_tensor(cmd, device=device).squeeze()
+                if cmd_t.numel() < 7:
+                    continue
+                des_pos_b = cmd_t[:3]
+                des_quat_b = cmd_t[3:7]
+                if root_pos is None:
+                    root_pos, root_quat = self._extract_robot_root(env, device)
+                if root_pos is not None and root_quat is not None:
+                    from isaaclab.utils.math import combine_frame_transforms
+
+                    _target_w, target_q = combine_frame_transforms(
+                        root_pos.unsqueeze(0),
+                        root_quat.unsqueeze(0),
+                        des_pos_b.unsqueeze(0),
+                        des_quat_b.unsqueeze(0),
+                    )
+                    return target_q.squeeze()
+            except Exception:
+                continue
+        return None
+
+    def _apply_orientation(
+        self,
+        action: torch.Tensor,
+        eef_quat: torch.Tensor | None,
+        target_quat: torch.Tensor | None,
+    ) -> None:
+        """Write an orientation command into ``action``."""
+        if target_quat is None:
+            return
+        if self._relative_mode:
+            # Relative controllers: command a yaw correction.
+            if eef_quat is None:
+                return
+            try:
+                yaw_current = self._quat_to_yaw(eef_quat)
+                yaw_target = self._quat_to_yaw(target_quat)
+                yaw_err = self._angle_diff(yaw_target, yaw_current)
+                action[..., 5] = torch.clamp(torch.as_tensor(yaw_err * 2.0, device=action.device), -1.0, 1.0)
+            except Exception:
+                pass
+        else:
+            # Absolute mode: command the target quaternion directly.
+            action[..., 3:7] = target_quat[:4]
+
+    def _orientation_aligned(
+        self, eef_quat: torch.Tensor | None, target_quat: torch.Tensor | None
+    ) -> bool:
+        if target_quat is None or eef_quat is None:
+            return True
+        try:
+            dot = float(torch.abs(torch.sum(eef_quat * target_quat)).item())
+            dot = min(1.0, max(0.0, dot))
+            angle = 2.0 * math.acos(dot)
+            return angle < self._orientation_threshold
+        except Exception:
+            return True
+
+    @staticmethod
+    def _quat_to_yaw(q: torch.Tensor) -> float:
+        # IsaacLab quaternion convention is (w, x, y, z).
+        x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
+        return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+    @staticmethod
+    def _angle_diff(target: float, current: float) -> float:
+        diff = target - current
+        while diff > math.pi:
+            diff -= 2.0 * math.pi
+        while diff < -math.pi:
+            diff += 2.0 * math.pi
+        return diff
+
+    def _log_hints(self) -> None:
+        import sys
+
+        print(f"[HEURISTIC_SKILL_HINTS] consumed: {sorted(self._skill_hints)}", file=sys.stderr)
+        print(
+            f"[HEURISTIC_SKILL_HINTS] params: approach_z={self._approach_offset_z:.4f} "
+            f"grasp_z={self._grasp_offset_z:.4f} lift_h={self._lift_height:.4f} "
+            f"align_h={self._align_height_offset:.4f} kp={self._kp:.4f} "
+            f"grasp_dist={self._grasp_dist_threshold:.4f} min_grasp={self._min_grasp_steps} "
+            f"min_release={self._min_release_steps} orient_thr={self._orientation_threshold:.4f}",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "HeuristicServoGoalPosePolicy":
+        return HeuristicServoGoalPosePolicy(HeuristicServoGoalPosePolicyArgs.from_cli_args(args))
 
 
 class CheatLiftPolicy(PolicyBase):

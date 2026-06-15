@@ -11,6 +11,8 @@ import gymnasium as gym
 import numpy as np
 
 from rosclaw_darwin.evaluation.arena_docker_deps.heuristic_policy import (
+    HeuristicServoGoalPosePolicy,
+    HeuristicServoGoalPosePolicyArgs,
     HeuristicServoLiftPolicy,
     HeuristicServoLiftPolicyArgs,
 )
@@ -130,3 +132,20 @@ def test_servo_policy_logs_hint_consumption(capsys):
     captured = capsys.readouterr()
     assert "HEURISTIC_SKILL_HINTS" in captured.err
     assert "grasp_adjust" in captured.err
+
+
+def test_goal_pose_policy_imports_and_runs():
+    env = SimpleDeltaEnv(action_shape=(8,))
+    policy = HeuristicServoGoalPosePolicy(HeuristicServoGoalPosePolicyArgs())
+    obs = env.reset()
+    action = policy.get_action(env, obs)
+    assert action.shape == env.action_space.shape
+
+
+def test_goal_pose_policy_skill_hints_adjust_parameters():
+    base = HeuristicServoGoalPosePolicy(HeuristicServoGoalPosePolicyArgs())
+    hinted = HeuristicServoGoalPosePolicy(
+        HeuristicServoGoalPosePolicyArgs(skill_hints=["target_tracking", "release_at_target"])
+    )
+    assert hinted._lift_kp_multiplier > base._lift_kp_multiplier
+    assert hinted._min_release_steps > base._min_release_steps

@@ -79,6 +79,7 @@ def main() -> None:
     parser.add_argument("--manual-hints", default="grasp_adjust,efficient_execution,adaptive_skill")
     parser.add_argument("--manual-policy", default=None, help="Optional policy config YAML to use for the manual-hints condition (overrides --manual-hints).")
     parser.add_argument("--out", default="/tmp/rosclaw_data/ablations/lift_skill_hints")
+    parser.add_argument("--report-path", default="reports/SKILL_HINT_PROGRESS_ABLATION_REPORT.md")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -188,7 +189,7 @@ def main() -> None:
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    report_path = Path("reports/SKILL_HINT_PROGRESS_ABLATION_REPORT.md")
+    report_path = Path(args.report_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(_render_report(summary))
     print(f"[ablation] summary saved to {out_dir / 'summary.json'}")

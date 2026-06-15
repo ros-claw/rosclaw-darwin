@@ -17,6 +17,7 @@
 ## Evolution and ablation
 
 - [Skill Hint Progress Ablation Report](SKILL_HINT_PROGRESS_ABLATION_REPORT.md) — with/without/auto hint comparison and transfer gain.
+- [Goal Pose Skill Hint Ablation Report](GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md) — cross-task replication on `goal_pose` (cube reorientation).
 - [Real Arena Evolution Evidence Report](REAL_ARENA_EVOLUTION_EVIDENCE_REPORT.md) — large-N follow-up of the closed-loop failure-to-hint pipeline.
 - [Final Next Stage Report](FINAL_NEXT_STAGE_REPORT.md) — step-by-step status against the implementation outline and remaining work.
 

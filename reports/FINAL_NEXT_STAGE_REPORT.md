@@ -19,8 +19,8 @@ ROSClaw-Darwin 已初步完成大纲中的核心闭环：
   manual hints Δsuccess = +0.12）。
 - **Dashboard** 已新增 lift progress、horizon sweep、ablation 视图。
 
-**结论：** 当前可 claim **preliminary evolution evidence**，但仍是单任务、中等样本量，
-下一步需要跨任务复现和更大样本量。
+**结论：** 当前可 claim **preliminary evolution evidence on `lift_object`**，但跨任务复现
+在 ``goal_pose`` 上暂未观察到正向 transfer；hint 生成与消费链路本身已跨任务跑通。
 
 ## Step-by-step 状态
 
@@ -116,6 +116,22 @@ ROSClaw-Darwin 已初步完成大纲中的核心闭环：
 
 - 报告：[`SKILL_HINT_PROGRESS_ABLATION_REPORT.md`](SKILL_HINT_PROGRESS_ABLATION_REPORT.md)。
 
+### Step 10b: Cross-task replication (ongoing / negative result on `goal_pose`)
+
+- 新增 ``HeuristicServoGoalPosePolicy`` 与配置 ``configs/policies/heuristic_servo_goal_pose.yaml``。
+- 复用同一 ablation 脚本在真实 Arena ``goal_pose_001`` 上跑 3 episodes/condition：
+
+| condition | success_rate | progress | failure_counts |
+|---|---|---|---|
+| without_hints | 0.0 | 0.4942 | ``object_not_lifted``: 3 |
+| manual_hints | 0.0 | 0.4950 | ``object_not_lifted``: 3 |
+| auto_hints | 0.0 | 0.4886 | ``object_not_lifted``: 3 |
+
+- Auto hints 从 ``object_not_lifted`` 正确生成 ``longer_gripper_close``、
+  ``stronger_lift``、``stabilize_lift``，并被 policy 消费。
+- 未观察到正向 transfer：物体在到达目标姿态附近后掉落，抓取稳定性是主要瓶颈。
+- 报告：[`GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md`](GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md)。
+
 ### Step 11: Dashboard 升级 ✅
 
 - 新增页面：
@@ -146,17 +162,20 @@ and report whether the hint produced measurable progress.
 
 - 正向 transfer gain 仅验证于单个任务 `lift_object`。
 - 样本量为 50 episodes/condition，效应值 modest（+0.10–+0.12）。
-- 尚未在 pick-and-place、cube reorientation 等第二任务上复现。
+- 跨任务复现已在 ``goal_pose``（cube reorientation）上完成，但结果为负向：
+  policy 能到达目标姿态附近，却因抓取不稳定导致物体掉落，hint 未带来可测提升。
+  这说明 transfer 并非自动泛化到所有 manipulation 任务。
 - Dashboard 仍是表格视图，未加入曲线图。
 
 ## 下一步建议（按优先级）
 
-1. **跨任务复现 failure-to-hint transfer**
-   - 选择 pick-and-place 或 cube_goal_pose。
-   - 复用同一 `FailureToHintEngine` + ablation 脚本。
-   - 目标：证明 auto hint 的 transfer 不是 `lift_object` 特有的。
+1. **分析并解决 ``goal_pose`` 的抓取掉落问题**
+   - 可能的抓手：延长闭合时间、降低 gripper close threshold、增加柔顺抓取阶段、
+     或改用推/转策略。
+   - 若 mid-air 抓取确实不可行，选择更接近 ``lift_object`` 的第二任务（如
+     ``pick_object``）复现正向 transfer。
 
-2. **扩大样本量到 100 episodes/condition**
+2. **扩大 ``lift_object`` 样本量到 100 episodes/condition**
    - 进一步降低采样误差，稳定 Δsuccess 估计。
 
 3. **把 manual hint 参数也自动化**
