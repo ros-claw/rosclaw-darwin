@@ -108,6 +108,7 @@ def _load_job_config() -> dict[str, Any]:
 _JOB_CONFIG = _load_job_config()
 _POLICY_CONFIG = dict(_JOB_CONFIG.get("policy_config_dict") or {})
 _POLICY_TYPE = str(_JOB_CONFIG.get("policy_type", ""))
+_SUCCESS_CONDITIONS = list(_JOB_CONFIG.get("success_conditions") or [])
 
 
 def _is_oracle_policy() -> bool:
@@ -271,8 +272,14 @@ def _dist(p1: dict[str, float | None], p2: dict[str, float | None]) -> float:
     )
 
 
-def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, Any]:
-    """Compute per-episode progress metrics and aggregate summary."""
+def _compute_progress_metrics(traces: list[list[dict[str, Any]]], success_conditions: list[str] | None = None) -> dict[str, Any]:
+    """Compute per-episode progress metrics and aggregate summary.
+
+    ``success_conditions`` comes from the ROSClaw task definition and drives
+    how an episode is classified as successful.  For example, a task whose
+    only condition is ``object_lifted`` should count any lifted object as a
+    success, whereas ``pose_reached`` requires proximity to the command target.
+    """
     is_oracle = _is_oracle_policy()
     policy_metadata = {
         "policy_type": _POLICY_TYPE,
@@ -283,6 +290,10 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, A
             or "cheat" in _POLICY_TYPE.lower()
         ),
     }
+
+    success_conditions = success_conditions or []
+    require_target_proximity = "pose_reached" in success_conditions
+    require_object_lifted = "object_lifted" in success_conditions
 
     grasp_dist_threshold = float(_POLICY_CONFIG.get("grasp_dist_threshold", 0.03))
     success_threshold = float(_POLICY_CONFIG.get("success_threshold", 0.06))
@@ -325,9 +336,16 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]]) -> dict[str, A
             or object_delta > lift_height_threshold
         )
         lifted = object_delta > lift_height_threshold
-        # Use the minimum object-to-target distance during the episode to align
-        # with Arena's early-success termination (the final state may overshoot).
-        success = reached_object and lifted and target_min < success_threshold
+
+        # Use task-aware success criteria.  Default behaviour (pose_reached or no
+        # explicit conditions) requires both lift and target proximity.  When the
+        # task only requires object_lifted, target proximity is not required.
+        if require_object_lifted and not require_target_proximity:
+            success = reached_object and lifted
+        else:
+            # Use the minimum object-to-target distance during the episode to align
+            # with Arena's early-success termination (the final state may overshoot).
+            success = reached_object and lifted and target_min < success_threshold
 
         nonzero_actions = sum(1 for n in action_norms if n is not None and n > 1e-4)
         nonzero_rate = nonzero_actions / max(1, len(action_norms))
@@ -533,7 +551,7 @@ def _write_metrics_file() -> None:
                     rec = json.loads(line)
                     trace_episodes.setdefault(int(rec.get("episode", 0)), []).append(rec)
             if trace_episodes:
-                progress_summary = _compute_progress_metrics(list(trace_episodes.values()))
+                progress_summary = _compute_progress_metrics(list(trace_episodes.values()), _SUCCESS_CONDITIONS)
                 for k, v in progress_summary.items():
                     output[k] = v
         except Exception as e:
@@ -541,7 +559,7 @@ def _write_metrics_file() -> None:
             pass
 
     if _captured_episode_traces:
-        progress_summary = _compute_progress_metrics(_captured_episode_traces)
+        progress_summary = _compute_progress_metrics(_captured_episode_traces, _SUCCESS_CONDITIONS)
         for k, v in progress_summary.items():
             output.setdefault(k, v)
 

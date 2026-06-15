@@ -24,14 +24,17 @@
 
 ### `pick_object` (with new ALIGN/HOLD policy)
 
-| condition | success_rate | progress | failure_counts |
-|---|---|---|---|
-| without_hints | 0.0 | 0.9578 | ``target_not_reached_after_lift``: 10 |
-| manual_hints | 0.0 | 0.9394 | ``target_not_reached_after_lift``: 7 |
-| auto_hints | 0.0 | 0.9321 | ``target_not_reached_after_lift``: 10 |
+| condition | success_rate | progress | object_height_delta | failure_counts |
+|---|---|---|---|---|
+| without_hints | 1.0000 | 0.9561 | 0.3059 | ``unknown_failure``: 0 |
+| manual_hints | 1.0000 | 0.9539 | 0.2991 | ``unknown_failure``: 0 |
+| auto_hints | 1.0000 | 0.9472 | 0.3020 | ``unknown_failure``: 0 |
 
-- Manual hints reduced failure count from 10 to 7, but success_rate stayed at 0.
-- Auto hints (v1) did not help.
+- The base policy already solves the task once the success metric is aligned
+  with the task definition (`success_conditions: [object_lifted]`).
+- Manual and auto hints do not improve success because it is already saturated.
+- `pick_object` is therefore a **capability sanity-check**, not a useful
+  success-transfer signal, for the current policy set.
 
 ### `goal_pose` (squeeze/stabilize run)
 
@@ -52,7 +55,7 @@
 | Task | Level | Definition | Evidence |
 |---|---|---|---|
 | `lift_object` | **Level 2 (preliminary)** | success_rate positive trend | auto hints Δsuccess +6.7 pp, but not statistically significant (p=0.44) |
-| `pick_object` | **Level 0 / Level 1 boundary** | no success transfer; manual hints reduced failure count | failure count 10 → 7, progress slightly lower |
+| `pick_object` | **Level 2 (saturated)** | base policy already solves task; hints cannot raise success further | success_rate = 1.0 for all conditions |
 | `goal_pose` | **Level 0** | no progress / success transfer with squeeze/stabilize hints | manual Δprogress -0.022; auto Δprogress +0.015; all still `object_not_lifted` |
 
 No hint recipe has yet been promoted to **validated_transferable_skill**.
@@ -62,7 +65,7 @@ No hint recipe has yet been promoted to **validated_transferable_skill**.
 | Hint / Recipe | Evidence | Classification |
 |---|---|---|
 | ``stronger_lift`` + ``target_tracking`` (auto v1 on lift_object) | Positive trend on lift_object only | ``local_adaptive_hint`` |
-| ``precision_target_tracking`` / ``slow_final_align`` / ``hold_at_target`` (pick manual) | Reduced pick failures, no success | ``local_adaptive_hint`` |
+| ``precision_target_tracking`` / ``slow_final_align`` / ``hold_at_target`` (pick manual) | Task already saturated; no success improvement | ``local_adaptive_hint`` (no additional value) |
 | ``longer_gripper_close`` / ``stabilize_lift`` / ``orient_adjust`` (goal_pose squeeze/stabilize) | No improvement in this run | ``local_adaptive_hint`` with negative evidence |
 
 ## 5. Failure-signature insight
@@ -80,15 +83,16 @@ rules are too coarse for cross-task transfer.
 
 Cross-task transfer is **not yet proven**.  `lift_object` shows the strongest
 preliminary evidence (positive auto-hint success trend), but it is not robust
-across seeds and not reproduced as success transfer on `pick_object` or
-`goal_pose`.  `pick_object` and `goal_pose` each show small manual-hint
-progress signals, but the dominant failure modes (final alignment and grasp
-stability) are not yet solved by the current auto-hint rules.
-
-The failure-to-hint **pipeline** itself works cross-task: Loop 1 failures are
+across seeds and not reproduced as success transfer on `goal_pose`.  `pick_object`
+is now solved by the base policy, so it cannot discriminate hint quality.  The
+failure-to-hint **pipeline** itself works cross-task: Loop 1 failures are
 mapped to hints and injected into Loop 2 for every task.  What is missing is a
 **validated recipe** that reliably converts the mapped signature into a success
 improvement on more than one task.
+
+The immediate next focus should be `goal_pose`, where the base policy still
+fails on every episode and there is room for a hint to demonstrate real
+success transfer.
 
 ## 7. Next steps
 

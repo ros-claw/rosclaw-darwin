@@ -1211,9 +1211,11 @@ class HeuristicServoPickPolicy(HeuristicServoLiftPolicy):
                     self._transition("LIFT")
 
         elif self._state == "LIFT":
+            # Use the command target directly when available (it already encodes
+            # the desired lift height / placement pose).  Only fall back to
+            # object_pos + lift_height for tasks without an explicit target.
             if target_pos is not None:
                 target = target_pos.clone()
-                target[2] += self._lift_height
                 if object_pos is not None:
                     target[:2] = object_pos[:2]
             else:

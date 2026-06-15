@@ -10,35 +10,30 @@
 
 | condition | success_rate | progress | eef_min ↓ | object_height_delta ↑ | failure_counts |
 |---|---|---|---|---|---|
-| without_hints | 0.0 | 0.9578 | 0.0067 | 0.3199 | {'target_not_reached_after_lift': 10} |
-| manual_hints | 0.0 | 0.9394 | 0.0066 | 0.2859 | {'target_not_reached_after_lift': 7} |
-| auto_hints | 0.0 | 0.9321 | 0.0058 | 0.3075 | {'target_not_reached_after_lift': 10} |
+| without_hints | 1.0 | 0.9561 | 0.0062 | 0.3059 | {'unknown_failure': 0} |
+| manual_hints | 1.0 | 0.9539 | 0.007 | 0.2991 | {'unknown_failure': 0} |
+| auto_hints | 1.0 | 0.9472 | 0.0067 | 0.302 | {'unknown_failure': 0} |
 
 ## Transfer Gain (variant - baseline)
 
 | comparison | Δsuccess | Δprogress | Δdistance | Δheight |
 |---|---|---|---|---|
-| manual | 0.0 | -0.0184 | -0.0039 | -0.034 |
-| auto | 0.0 | -0.0257 | -0.0032 | -0.0124 |
+| manual | 0.0 | -0.0022 | -0.001 | -0.0068 |
+| auto | 0.0 | -0.0089 | 0.0126 | -0.0039 |
 
 ## Honest Conclusion
 
-With the new ``HeuristicServoPickPolicy`` (explicit ALIGN / SLOW_ALIGN /
-HOLD_AT_TARGET phases), ``pick_object`` still has ``success_rate = 0.0`` across
-10 episodes per condition.  However, the failure mechanism shifted:
+All three conditions achieve **100% success** on `pick_object_001`.
 
-- **without_hints**: 10/10 ``target_not_reached_after_lift``.
-- **manual_hints** (`precision_target_tracking`, `slow_final_align`, `hold_at_target`):
-  7/10 ``target_not_reached_after_lift`` — the alignment phase reduced the raw
-  failure count, but did not fully close the success gap.
-- **auto_hints** (`stronger_lift`, `target_tracking`): 10/10 failures; the v1
-  failure-type rule did not address the fine-grained ``final_alignment_gap``
-  signature.
+- `without_hints`: success 1.0, progress 0.9561.
+- `manual_hints` (`precision_target_tracking`, `slow_final_align`, `hold_at_target`):
+  success 1.0, progress 0.9539 (slightly more conservative lift).
+- `auto_hints`: success 1.0, progress 0.9472.  Auto hints were empty because the
+  without-hints Loop 1 produced no failures to mine.
 
-Progress remains very high (~0.93–0.96), confirming the policy can lift the
-cube reliably.  The residual issue is that either (a) the final object-to-target
-residual is still above Arena's success tolerance, (b) the hold duration is not
-long enough for the success condition to register, or (c) the target residual
-drifts after the hold.  Tuning ``align_kp``, ``hold_steps``, or lowering
-``success_threshold`` further is the next step.
+The previous ``target_not_reached_after_lift`` failure was caused by a generic
+Arena-side metric that required target proximity even though the ROSClaw task
+only requires `object_lifted`.  After making the metric task-aware and fixing
+the pick-policy LIFT target, the base policy solves the task.  This run is
+therefore a **capability sanity-check**, not a success-transfer experiment.
 

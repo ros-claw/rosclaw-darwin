@@ -1067,6 +1067,11 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 native_config = self.task.provenance.native_config or {}
             job.update(native_config)
 
+            # Pass ROSClaw task success conditions so the Arena-side metric
+            # computation can align its success/failure classification with the
+            # task definition (e.g. object_lifted vs pose_reached).
+            job["success_conditions"] = list(self.task.eval.success_conditions or [])
+
             job["_policy_metadata"] = policy_metadata.model_dump(mode="json")
 
             # Diagnostic overrides: force a fixed-step rollout regardless of the

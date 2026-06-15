@@ -30,9 +30,19 @@ Success-rate Wilson CIs: without [0.213, 0.442], auto [0.271, 0.510].
 
 ## 4. What is `pick_object`'s success gap?
 
-Progress ≈ 0.95 but success = 0.  The FailureSignature v2 tag is
-``final_alignment_gap`` / ``lifted_but_not_aligned`` / ``high_progress_zero_success``.
-The object is lifted but does not satisfy the final target condition.
+The gap was a **metric mismatch**, not a policy failure.  The task's
+`success_conditions` are `[object_lifted]`, but the Arena-side generic metric
+additionally required `object_to_target_distance_min < threshold`.  Once the
+metric was made task-aware, all three conditions achieved **success_rate = 1.0**.
+
+| condition | success_rate | progress | object_height_delta |
+|---|---|---|---|
+| without_hints | 1.0000 | 0.9561 | 0.3059 |
+| manual_hints | 1.0000 | 0.9539 | 0.2991 |
+| auto_hints | 1.0000 | 0.9472 | 0.3020 |
+
+`pick_object` is therefore a **saturated sanity-check**, not a useful
+success-transfer signal.
 
 ## 5. What is `goal_pose`'s grasp stability problem?
 
@@ -60,16 +70,16 @@ rule file with v2 signature recipes in the ablation pipeline.
 ## 7. Is cross-task transfer observed?
 
 **No validated cross-task transfer.**  `lift_object` shows a preliminary
-positive trend; `pick_object` shows a reduced failure count under manual hints
-but still zero success; `goal_pose` shows no improvement under squeeze/stabilize
-hints.  No recipe is yet ``validated_transferable_skill``.
+positive trend; `pick_object` is solved by the base policy so hints cannot
+produce additional success transfer; `goal_pose` shows no improvement under
+squeeze/stabilize hints.  No recipe is yet ``validated_transferable_skill``.
 
 ## 8. Which hints are local adaptive hints?
 
 All current hints:
 
 - ``stronger_lift`` + ``target_tracking`` (lift_object auto v1)
-- ``precision_target_tracking`` / ``slow_final_align`` / ``hold_at_target`` (pick manual)
+- ``precision_target_tracking`` / ``slow_final_align`` / ``hold_at_target`` (pick manual; task saturated, no additional value)
 - ``longer_gripper_close`` / ``stabilize_lift`` / ``orient_adjust`` (goal_pose squeeze/stabilize, no improvement)
 
 ## 9. Which hints are skill candidates?
@@ -92,13 +102,14 @@ implemented; the Dashboard still uses tables.  See
 
 **Prioritize the following before expanding tasks:**
 
-1. Harden `lift_object` evidence with a larger, stable multi-seed run.
-2. Convert `pick_object` reduced failure count into non-zero success.
-3. Revisit `goal_pose` with a stronger grasp-stability strategy (orientation-aware
-   grasp pose, lower lift acceleration, two-stage lift-then-reorient).
-4. Promote any recipe that shows positive transfer on two tasks to
+1. Revisit `goal_pose` with a stronger grasp-stability strategy (orientation-aware
+   grasp pose, lower lift acceleration, two-stage lift-then-reorient).  This is now
+   the only remaining task where success is not saturated and a hint could show
+   real transfer.
+2. Harden `lift_object` evidence with a larger, stable multi-seed run.
+3. Promote any recipe that shows positive transfer on two tasks to
    ``validated_transferable_skill``.
-5. Learned policy baseline remains a background effort; do not let it block
+4. Learned policy baseline remains a background effort; do not let it block
    the heuristic + hint evidence line.
 
 ---
@@ -109,10 +120,12 @@ implemented; the Dashboard still uses tables.  See
 
 ```text
 ROSClaw-Darwin has a working failure-signature-driven hint pipeline.
+The Arena-side success metric is now task-aware (object_lifted vs pose_reached).
 On lift_object, auto hints show a repeated positive success-rate trend,
 but the effect is modest and not yet statistically robust.
-Cross-task transfer is not proven; pick_object and goal_pose remain
- task-dependent local adaptive hints.
+On pick_object, the base servo policy achieves 100% success once the metric
+matches the task definition.
+Cross-task transfer is not proven; goal_pose remains unsolved.
 ```
 
 **Cannot claim:**
