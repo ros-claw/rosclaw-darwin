@@ -53,6 +53,38 @@ def _append_trace(step: dict[str, Any]) -> None:
         pass
 
 
+_TRACE_METADATA_WRITTEN = False
+
+
+def _write_trace_metadata(metadata: dict[str, Any] | None = None) -> None:
+    """Write a one-off metadata file next to the trace.
+
+    This records schema version and field definitions so downstream analysis
+    knows whether ``orientation_error`` means object-yaw-error or
+    end-effector-yaw-error.
+    """
+    global _TRACE_METADATA_WRITTEN
+    if _TRACE_METADATA_WRITTEN:
+        return
+    _TRACE_METADATA_WRITTEN = True
+    try:
+        meta_path = os.path.join(_TRACE_DIR, "trace_metadata.json")
+        payload = {
+            "trace_schema_version": "goal_pose_trace_v2",
+            "orientation_error_definition": "object_yaw_error_to_target_yaw",
+            "eef_yaw_recorded": True,
+        }
+        if metadata:
+            payload.update(metadata)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as e:
+        import sys
+
+        print(f"[TRACE_METADATA_ERROR] {e}", file=sys.stderr)
+        pass
+
+
 @dataclass
 class HeuristicLiftPolicyArgs:
     """Configuration for HeuristicLiftPolicy."""
@@ -767,6 +799,13 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
 
     def __init__(self, config: HeuristicServoGoalPosePolicyArgs):
         super().__init__(config)
+        # Record schema version so downstream analysis can distinguish
+        # object-yaw error from end-effector-yaw error.
+        _write_trace_metadata({
+            "trace_schema_version": "goal_pose_trace_v2",
+            "orientation_error_definition": "object_yaw_error_to_target_yaw",
+            "eef_yaw_recorded": True,
+        })
         self._min_release_steps = config.min_release_steps
         self._align_height_offset = config.align_height_offset
         self._orientation_threshold = config.orientation_threshold
@@ -1031,27 +1070,68 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             target_yaw = None
             if target_quat is not None and target_quat.numel() >= 4:
                 target_yaw = self._quat_to_yaw(target_quat)
-            orientation_error = None
+            object_yaw_error = None
             if object_yaw is not None and target_yaw is not None:
-                orientation_error = self._angle_diff(target_yaw, object_yaw)
+                object_yaw_error = self._angle_diff(target_yaw, object_yaw)
+
+            # End-effector orientation and yaw tracking.
+            eef_roll = eef_pitch = eef_yaw = None
+            if eef_quat is not None and eef_quat.numel() >= 4:
+                eef_roll, eef_pitch, eef_yaw = self._quat_to_rpy(eef_quat)
+
+            # Desired eef yaw depends on the current phase.
+            desired_eef_yaw = None
+            if self._state == "PRE_GRASP_ORIENT" and object_yaw is not None:
+                desired_eef_yaw = object_yaw + self._grasp_target_yaw_offset
+            elif target_yaw is not None:
+                desired_eef_yaw = target_yaw
+            elif object_yaw is not None:
+                desired_eef_yaw = object_yaw
+
+            eef_yaw_error = None
+            if eef_yaw is not None and desired_eef_yaw is not None:
+                eef_yaw_error = self._angle_diff(desired_eef_yaw, eef_yaw)
+
+            # Rotational action components for axis calibration.
+            action_rot_x = action_rot_y = action_rot_z = None
+            if action.shape[-1] >= 6:
+                action_rot_x = float(action[..., 3].item())
+                action_rot_y = float(action[..., 4].item())
+                action_rot_z = float(action[..., 5].item())
+
             _append_trace({
                 "episode": self._episode_idx,
                 "step": step,
                 "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
                 "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
                 "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "eef_qx": float(eef_quat[0].item()) if eef_quat is not None and eef_quat.numel() >= 4 else None,
+                "eef_qy": float(eef_quat[1].item()) if eef_quat is not None and eef_quat.numel() >= 4 else None,
+                "eef_qz": float(eef_quat[2].item()) if eef_quat is not None and eef_quat.numel() >= 4 else None,
+                "eef_qw": float(eef_quat[3].item()) if eef_quat is not None and eef_quat.numel() >= 4 else None,
+                "eef_roll": eef_roll,
+                "eef_pitch": eef_pitch,
+                "eef_yaw": eef_yaw,
+                "desired_eef_yaw": desired_eef_yaw,
+                "eef_yaw_error": eef_yaw_error,
                 "object_x": float(object_pos[0].item()),
                 "object_y": float(object_pos[1].item()),
                 "object_z": float(object_pos[2].item()),
+                "object_yaw": float(object_yaw) if object_yaw is not None else None,
+                "target_yaw": float(target_yaw) if target_yaw is not None else None,
+                "object_yaw_error": object_yaw_error,
+                # Deprecated alias kept for backward compatibility with older
+                # reports; new analysis should use object_yaw_error.
+                "orientation_error": object_yaw_error,
                 "target_x": float(target_pos[0].item()) if target_pos is not None else None,
                 "target_y": float(target_pos[1].item()) if target_pos is not None else None,
                 "target_z": float(target_pos[2].item()) if target_pos is not None else None,
                 "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
                 "action_norm": float(torch.linalg.norm(action).item()),
+                "action_rot_x": action_rot_x,
+                "action_rot_y": action_rot_y,
+                "action_rot_z": action_rot_z,
                 "phase": self._state,
-                "object_yaw": float(object_yaw) if object_yaw is not None else None,
-                "target_yaw": float(target_yaw) if target_yaw is not None else None,
-                "orientation_error": float(orientation_error) if orientation_error is not None else None,
             })
 
         return action
@@ -1207,6 +1287,32 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         # IsaacLab quaternion convention is (w, x, y, z).
         x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
         return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+    @staticmethod
+    def _quat_to_rpy(q: torch.Tensor) -> tuple[float, float, float]:
+        """Convert quaternion to roll/pitch/yaw.
+
+        The policy's ``_quat_to_yaw`` has been calibrated against the
+        quaternion ordering returned by Arena (x, y, z, w).  This helper uses
+        the same convention so that roll/pitch/yaw are consistent with the yaw
+        values already used for orientation control.
+        """
+        x, y, z, w = q[0].item(), q[1].item(), q[2].item(), q[3].item()
+        # roll (x-axis rotation)
+        sinr_cosp = 2.0 * (w * x + y * z)
+        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+        # pitch (y-axis rotation)
+        sinp = 2.0 * (w * y - z * x)
+        if abs(sinp) >= 1.0:
+            pitch = math.copysign(math.pi / 2.0, sinp)
+        else:
+            pitch = math.asin(sinp)
+        # yaw (z-axis rotation)
+        siny_cosp = 2.0 * (w * z + x * y)
+        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        return roll, pitch, yaw
 
     @staticmethod
     def _angle_diff(target: float, current: float) -> float:

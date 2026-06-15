@@ -90,3 +90,22 @@ A larger episode budget and additional parameter search (grasp depth, finger
 closing force/position, reorientation speed) are needed.  Alternatively, a
 different grasp pose (e.g. top-down vs. side grasp) or a controller with
 explicit force closure may be required.
+
+## 6. Diagnostic correction (trace schema v2)
+
+The earlier conclusion stated that the `PRE_GRASP_ORIENT` phase did not change
+`orientation_error`, suggesting the gripper yaw controller was unresponsive.
+That inference was incorrect: the trace was recording **object yaw error to
+target yaw**, not end-effector yaw.  Since the object was not grasped during
+`PRE_GRASP_ORIENT`, its yaw was expected to remain unchanged.
+
+Trace schema v2 now records:
+
+- `eef_roll`, `eef_pitch`, `eef_yaw`
+- `desired_eef_yaw` and `eef_yaw_error`
+- `object_yaw_error` (renamed from the ambiguous `orientation_error`)
+- `action_rot_x`, `action_rot_y`, `action_rot_z`
+
+Only with the new fields can we determine whether the gripper yaw action
+causes the end-effector to rotate before grasp.  See
+`GOAL_POSE_TRACE_SCHEMA_V2_REPORT.md` for the calibration plan.
