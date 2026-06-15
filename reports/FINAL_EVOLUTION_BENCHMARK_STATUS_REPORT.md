@@ -50,16 +50,26 @@ The dominant signature is ``unstable_grasp`` / ``grasped_but_not_lifted`` /
 ``orientation_gap``.  The fingers close but the cube slips or is pulled out
 during lift / reorientation.
 
-A squeeze/stabilize intervention was tested (longer grasp + lower lift motion +
-orientation hint).  In a fresh 5-episode run it did **not** improve progress:
+A grasp-stability v2 intervention was tested:
 
-| condition | success_rate | progress | failure_counts |
+- Pre-grasp orientation based on scene object yaw.
+- Capped lift vertical delta (`max_lift_delta_z = 0.08`).
+- Two-stage lift-then-reorient (`REORIENT` state).
+- Manual hints: `orientation_aware_grasp`, `two_stage_reorientation`,
+  `lower_lift_acceleration`, `stabilize_lift`, `longer_gripper_close`.
+
+Results (5 episodes/condition):
+
+| condition | success_rate | progress | object_height_delta |
 |---|---|---|---|
-| without_hints | 0.0 | 0.4741 | ``object_not_lifted``: 5 |
-| manual_hints | 0.0 | 0.4526 | ``object_not_lifted``: 5 |
-| auto_hints | 0.0 | 0.4895 | ``object_not_lifted``: 5 |
+| without_hints | 0.0 | 0.4743 | -0.1636 |
+| manual_hints | 0.0 | 0.4919 | -0.0801 |
+| auto_hints | 0.0 | 0.4837 | -0.1258 |
 
-This suggests the grasp stability issue is deeper than squeeze duration alone.
+Manual hints improved progress slightly and reduced how far the object dropped,
+but **success is still 0**.  The bottleneck is deeper than squeeze duration or
+lift speed: likely gripper-object contact geometry / friction or the relative-mode
+yaw controller authority.
 
 ## 6. Does FailureSignature v2 improve auto hints?
 

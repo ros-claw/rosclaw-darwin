@@ -2,18 +2,17 @@
 
 ## 1. Observation
 
-The improved ``heuristic_servo_goal_pose`` policy still failed on all episodes
-in the 5-episode ablation:
+The `heuristic_servo_goal_pose` policy fails all episodes on `goal_pose_001`
+with the ``object_not_lifted`` failure signature:
 
-```text
-without_hints: progress = 0.4895, object_not_lifted = 5
-manual_hints:  progress = 0.5173, object_not_lifted = 3, target_not_reached_after_lift = 2
-auto_hints:    progress = 0.4733, object_not_lifted = 5
-```
+| condition | success_rate | progress | object_height_delta | failure_counts |
+|---|---|---|---|---|
+| without_hints | 0.0 | 0.4743 | -0.1636 | ``object_not_lifted``: 5 |
+| manual_hints (v2) | 0.0 | 0.4919 | -0.0801 | ``object_not_lifted``: 5 |
+| auto_hints (v2) | 0.0 | 0.4837 | -0.1258 | ``object_not_lifted``: 5 |
 
-Manual hints produced a small progress gain (Δprogress = +0.028) and moved two
-episodes to the later ``target_not_reached_after_lift`` stage, but no episode
-succeeded.
+The cube is reached and the fingers close, but the object slips or is pulled
+out during the lift / reorientation motion.
 
 ## 2. Grasp stability analysis
 
@@ -25,61 +24,69 @@ FailureSignature v2 tags for ``goal_pose``:
 - ``orientation_gap`` (the task has an orientation requirement)
 
 The dominant bottleneck is **grasp instability / mid-air drop**, not approach or
-target alignment.  The cube is reached and the fingers close, but the object
-slips or is pulled out of the grip during the lift / reorientation motion.
+target alignment.
 
-## 3. Intervention: squeeze and stabilize
+## 3. Intervention: grasp-stability v2
 
 Changes to ``HeuristicServoGoalPosePolicy``:
 
-1. **Squeeze phase**: GRASP now waits for the gripper position to fall below
-   ``gripper_close_threshold`` *or* for the squeeze deadline
-   ``min_grasp_steps + grasp_squeeze_steps`` to expire before entering LIFT.
-2. **New hint consumption**:
-   - ``longer_squeeze`` / ``longer_gripper_close`` → more min_grasp_steps and
-     squeeze_steps, lower close threshold.
-   - ``maintain_grip_force`` → extra squeeze steps.
-   - ``stabilize_lift`` / ``reduce_xy_motion`` → smaller lift horizontal scale,
-     lower lift kp, smaller align max delta.
-   - ``orient_adjust`` / ``orientation_aware_grasp`` / ``two_stage_reorientation``
-     → tighter orientation threshold and required orientation alignment.
-3. **Config updated**:
-   - ``gripper_close_threshold: 0.012``
-   - ``min_grasp_steps: 30``
-   - ``grasp_squeeze_steps: 15``
-   - ``lift_max_delta: 0.12``
-   - ``align_max_delta: 0.06``
+1. **Pre-grasp orientation** (`PRE_GRASP_ORIENT`):
+   - Reads the object's world-frame yaw from the scene.
+   - Rotates the gripper by `grasp_target_yaw_offset` (default π/2) before
+     descending, so the fingers approach a stable face of the cube.
+   - Falls back to descending after 30 steps so the state machine never gets
+     permanently stuck if the yaw controller has low authority.
+2. **Lower lift acceleration**:
+   - New `max_lift_delta_z` caps the vertical per-step delta (default 0.08 m).
+3. **Two-stage reorientation** (`REORIENT` state):
+   - Lifts to a safe height, rotates to the target orientation, then moves to
+     the final target pose in `ALIGN`.
+4. **New hint consumption**:
+   - `orientation_aware_grasp` → enables `pre_grasp_orient`, tighter yaw
+     threshold, and requires orientation alignment.
+   - `two_stage_reorientation` → enables `reorient_before_align`.
+   - `lower_lift_acceleration` / `gentle_lift` → reduces `max_lift_delta_z`
+     and lift kp multiplier.
+   - `centered_grasp` → sets `grasp_target_yaw_offset = π/2`.
 
 ## 4. Updated ablation
 
-A fresh 5-episode ablation was run with manual grasp-stability hints:
+A fresh 5-episode ablation was run with the v2 policy and manual hints:
 
 ```bash
 python scripts/ablations/run_lift_skill_hint_ablation.py \
   --task configs/tasks/goal_pose.yaml \
   --policy configs/policies/heuristic_servo_goal_pose.yaml \
-  --manual-hints longer_gripper_close,stabilize_lift,orient_adjust \
+  --manual-hints orientation_aware_grasp,two_stage_reorientation,lower_lift_acceleration,stabilize_lift,longer_gripper_close \
   --episodes 5 \
+  --out /tmp/rosclaw_data/ablations/goal_pose_grasp_stability_v3 \
   --report-path reports/GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md
 ```
 
 Results:
 
-| condition | success_rate | progress | failure_counts |
-|---|---|---|---|
-| without_hints | 0.0 | 0.4741 | ``object_not_lifted``: 5 |
-| manual_hints | 0.0 | 0.4526 | ``object_not_lifted``: 5 |
-| auto_hints | 0.0 | 0.4895 | ``object_not_lifted``: 5 |
+| condition | success_rate | progress | object_height_delta | failure_counts |
+|---|---|---|---|---|
+| without_hints | 0.0 | 0.4743 | -0.1636 | ``object_not_lifted``: 5 |
+| manual_hints | 0.0 | 0.4919 | -0.0801 | ``object_not_lifted``: 5 |
+| auto_hints | 0.0 | 0.4837 | -0.1258 | ``object_not_lifted``: 5 |
 
-The squeeze/stabilize hints did **not** reduce ``object_not_lifted`` in this
-small run.  Manual hints were slightly worse on progress; auto hints were
-slightly better but still left all episodes failing at grasp stability.
+Manual hints improved object-height retention (less negative delta) and
+`object_height_max` rose from 0.272 to 0.329, but **no episode succeeded**.
 
 ## 5. Honest conclusion
 
-The success gap is clearly **grasp stability**, not pose alignment.  Adding a
-squeeze phase and consuming stability hints did not solve it in this 5-episode
-run.  The bottleneck likely requires a more fundamental change: orientation-aware
-grasp pose, lower lift acceleration, a different grip force / friction profile,
-or a two-stage lift-then-reorient strategy that does not try to rotate while
-lifting.  A larger episode budget and targeted parameter search are needed.
+The success gap is clearly **grasp stability**, not pose alignment.  The v2
+interventions produce a small positive progress signal but do not solve the
+bottleneck within 5 episodes.  The remaining issues are likely:
+
+- Gripper-object contact geometry / friction in `cube_goal_pose`.
+- Low authority of the relative-mode yaw controller, so the pre-grasp
+  orientation may not actually change the finger approach angle.
+- The cube slipping during reorientation even when the gripper is nominally
+  closed.
+
+A larger episode budget and additional parameter search (grasp depth, finger
+closing force/position, reorientation speed) are needed.  Alternatively, a
+different grasp pose (e.g. top-down vs. side grasp) or a controller with
+explicit force closure may be required.

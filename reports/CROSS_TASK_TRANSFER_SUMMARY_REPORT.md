@@ -36,19 +36,18 @@
 - `pick_object` is therefore a **capability sanity-check**, not a useful
   success-transfer signal, for the current policy set.
 
-### `goal_pose` (squeeze/stabilize run)
+### `goal_pose` (grasp-stability v2 run)
 
-| condition | success_rate | progress | failure_counts |
-|---|---|---|---|
-| without_hints | 0.0 | 0.4741 | ``object_not_lifted``: 5 |
-| manual_hints | 0.0 | 0.4526 | ``object_not_lifted``: 5 |
-| auto_hints | 0.0 | 0.4895 | ``object_not_lifted``: 5 |
+| condition | success_rate | progress | object_height_delta | failure_counts |
+|---|---|---|---|---|
+| without_hints | 0.0 | 0.4743 | -0.1636 | ``object_not_lifted``: 5 |
+| manual_hints | 0.0 | 0.4919 | -0.0801 | ``object_not_lifted``: 5 |
+| auto_hints | 0.0 | 0.4837 | -0.1258 | ``object_not_lifted``: 5 |
 
-- Manual squeeze/stabilize hints did **not** improve progress; auto hints were
-  slightly better (+0.015) but still left all episodes in ``object_not_lifted``.
-- The original manual-hint run (``target_tracking``, ``efficient_execution``,
-  ``precision_placement``) showed Δprogress +0.028, but that combination was
-  not reproduced here.
+- Manual hints show a small positive progress signal (+0.018) and improved
+  object-height retention (+0.084), but success remains 0.
+- The bottleneck is still grasp stability / contact geometry in
+  `cube_goal_pose`.
 
 ## 3. Transfer levels
 

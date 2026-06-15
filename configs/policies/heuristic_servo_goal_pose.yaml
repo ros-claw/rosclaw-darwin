@@ -23,8 +23,17 @@ policy_config_dict:
   approach_horizontal_threshold: 0.05
   max_state_steps: 400
   success_threshold: 0.06
-  orientation_threshold: 3.14
+  orientation_threshold: 0.5
   lift_kp_multiplier: 1.0
   grasp_z_tolerance: 0.005
   fixed_target_pos: [0.1, 0.0, 0.3]
   fixed_target_quat: [0.0, 0.0, 0.7071, 0.7071]
+
+  # Grasp-stability v2 defaults (conservative; enable via hints for stronger
+  # orientation-aware grasp and two-stage reorientation).
+  pre_grasp_orient: false
+  grasp_target_yaw_offset: 1.5708
+  pre_grasp_yaw_threshold: 0.2
+  reorient_before_align: false
+  reorient_height_offset: 0.05
+  max_lift_delta_z: 0.08

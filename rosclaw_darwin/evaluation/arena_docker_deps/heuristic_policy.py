@@ -151,6 +151,14 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     release_at_target: bool = False
     require_orientation_alignment: bool = False
 
+    # Grasp-stability v2 controls.
+    pre_grasp_orient: bool = True
+    grasp_target_yaw_offset: float = 0.0
+    pre_grasp_yaw_threshold: float = 0.2
+    reorient_before_align: bool = True
+    reorient_height_offset: float = 0.05
+    max_lift_delta_z: float = 0.08
+
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoGoalPosePolicyArgs":
         return cls(skill_hints=getattr(args, "skill_hints", None))
@@ -765,6 +773,14 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         self._lift_max_delta = config.lift_max_delta
         self._align_max_delta = config.align_max_delta
 
+        # Grasp-stability v2 controls.
+        self._pre_grasp_orient = config.pre_grasp_orient
+        self._grasp_target_yaw_offset = config.grasp_target_yaw_offset
+        self._pre_grasp_yaw_threshold = config.pre_grasp_yaw_threshold
+        self._reorient_before_align = config.reorient_before_align
+        self._reorient_height_offset = config.reorient_height_offset
+        self._max_lift_delta_z = config.max_lift_delta_z
+
         # Goal-pose specific hint effects.
         if "precision_placement" in self._skill_hints:
             self._success_threshold = max(0.03, self._success_threshold * 0.8)
@@ -775,9 +791,13 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if "orient_adjust" in self._skill_hints or "orientation_aware_grasp" in self._skill_hints:
             self._require_orientation_alignment = True
             self._orientation_threshold *= 0.8
+            self._pre_grasp_orient = True
+            self._pre_grasp_yaw_threshold *= 0.7
         if "two_stage_reorientation" in self._skill_hints:
             self._require_orientation_alignment = True
             self._orientation_threshold *= 0.7
+            self._reorient_before_align = True
+            self._reorient_height_offset = max(0.03, self._reorient_height_offset - 0.02)
         if "stabilize_lift" in self._skill_hints or "reduce_xy_motion" in self._skill_hints:
             if self._align_max_delta is not None:
                 self._align_max_delta *= 0.75
@@ -792,6 +812,12 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if "maintain_grip_force" in self._skill_hints:
             self._min_grasp_steps += 3
             self._grasp_squeeze_steps += 5
+        if "lower_lift_acceleration" in self._skill_hints or "gentle_lift" in self._skill_hints:
+            self._max_lift_delta_z *= 0.7
+            self._lift_kp_multiplier *= 0.8
+        if "centered_grasp" in self._skill_hints:
+            self._grasp_target_yaw_offset = math.pi / 2.0
+            self._pre_grasp_orient = True
 
     def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
         device = torch.device(env.unwrapped.device)
@@ -832,6 +858,32 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             horiz = torch.norm(object_pos[:2] - eef_pos[:2])
             z_err = abs(eef_pos[2] - target[2])
             if horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5:
+                if self._pre_grasp_orient:
+                    self._transition("PRE_GRASP_ORIENT")
+                else:
+                    self._transition("DESCEND")
+
+        elif self._state == "PRE_GRASP_ORIENT":
+            # Stay above the object and rotate the gripper to a stable grasp yaw.
+            target = object_pos.clone()
+            target[2] += self._approach_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            object_yaw = self._extract_object_yaw(env, device)
+            if object_yaw is not None and eef_quat is not None:
+                desired_yaw = object_yaw + self._grasp_target_yaw_offset
+                current_yaw = self._quat_to_yaw(eef_quat)
+                yaw_err = self._angle_diff(desired_yaw, current_yaw)
+                if self._relative_mode:
+                    action[..., 5] = torch.clamp(torch.as_tensor(yaw_err * 2.0, device=action.device), -1.0, 1.0)
+            horiz = torch.norm(object_pos[:2] - eef_pos[:2])
+            z_err = abs(eef_pos[2] - target[2])
+            yaw_ok = object_yaw is None or abs(yaw_err) < self._pre_grasp_yaw_threshold
+            position_ok = horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5
+            # Do not get stuck trying to nudge the last few degrees; proceed to
+            # descend once we are above the object even if yaw is only roughly
+            # aligned.  The grasp can still succeed because the fingers are wide.
+            if position_ok and (yaw_ok or self._state_step >= 30):
                 self._transition("DESCEND")
 
         elif self._state == "DESCEND":
@@ -864,6 +916,11 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             else:
                 target = object_pos.clone()
                 target[2] += self._lift_height
+            # Cap the vertical acceleration to avoid pulling the object out of the
+            # grip during the lift.
+            lift_max_delta = self._lift_max_delta
+            if lift_max_delta is None or lift_max_delta > self._max_lift_delta_z:
+                lift_max_delta = self._max_lift_delta_z
             self._apply_position(
                 action,
                 eef_pos,
@@ -871,7 +928,7 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                 target,
                 kp_multiplier=self._lift_kp_multiplier,
                 horizontal_scale=self._lift_horizontal_scale,
-                max_delta=self._lift_max_delta,
+                max_delta=lift_max_delta,
             )
             action = self._set_gripper(action, open=False)
             # Transition when high enough; horizontal/rotational alignment is
@@ -884,6 +941,32 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             else:
                 near_target_xy = True
             if height_ok and near_target_xy:
+                if self._reorient_before_align and target_quat is not None:
+                    self._transition("REORIENT")
+                else:
+                    self._transition("ALIGN")
+
+        elif self._state == "REORIENT":
+            # Keep the object high and over the target, but rotate the gripper (and
+            # the grasped object) toward the target orientation before final
+            # alignment.  This avoids dragging the object during lift.
+            if target_pos is not None:
+                target = target_pos.clone()
+            else:
+                target = object_pos.clone()
+            target[2] += self._reorient_height_offset
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._align_kp_multiplier,
+                horizontal_scale=0.0,
+                max_delta=self._align_max_delta,
+            )
+            self._apply_orientation(action, eef_quat, target_quat)
+            action = self._set_gripper(action, open=False)
+            if self._orientation_aligned(eef_quat, target_quat):
                 self._transition("ALIGN")
 
         elif self._state == "ALIGN":
@@ -1040,6 +1123,29 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                     return target_q.squeeze()
             except Exception:
                 continue
+        return None
+
+    def _extract_object_yaw(
+        self, env: gym.Env, device: torch.device
+    ) -> float | None:
+        """Return the object's world-frame yaw from the scene, if available."""
+        try:
+            scene = getattr(env.unwrapped, "scene", None)
+            if scene is None:
+                return None
+            for key in ("dex_cube", "object", "cube"):
+                if key not in scene.keys():
+                    continue
+                obj = scene[key]
+                data = getattr(obj, "data", None)
+                if data is not None and hasattr(data, "root_quat_w"):
+                    quat = data.root_quat_w.squeeze().to(device)
+                    if quat.ndim > 1:
+                        quat = quat[0]
+                    if quat.numel() >= 4:
+                        return self._quat_to_yaw(quat)
+        except Exception:
+            pass
         return None
 
     def _apply_orientation(
