@@ -1,0 +1,54 @@
+policy_id: heuristic_servo_goal_pose_v3
+type: heuristic_servo_goal_pose
+strength: 0.7
+memory_bonus: 0.0
+skill_hints:
+  - stabilize_lift
+  - reduce_xy_motion
+  - longer_gripper_close
+  - verify_object_following
+  - skip_broken_yaw
+policy_config_dict:
+  approach_offset_z: 0.10
+  grasp_offset_z: 0.00
+  lift_height: 0.0
+  align_height_offset: 0.0
+  lift_horizontal_scale: 0.0
+  lift_max_delta: 0.12
+  align_horizontal_scale: 0.2
+  align_kp_multiplier: 0.5
+  align_max_delta: 0.06
+  release_at_target: false
+  # Controller yaw authority is broken in franka_ik relative mode.
+  # Do not require or attempt orientation alignment.
+  require_orientation_alignment: false
+  kp: 3.0
+  grasp_dist_threshold: 0.04
+  gripper_close_threshold: 0.012
+  min_grasp_steps: 30
+  grasp_squeeze_steps: 15
+  min_release_steps: 10
+  approach_horizontal_threshold: 0.05
+  max_state_steps: 400
+  success_threshold: 0.06
+  orientation_threshold: 0.5
+  lift_kp_multiplier: 1.0
+  grasp_z_tolerance: 0.005
+  fixed_target_pos: [0.1, 0.0, 0.3]
+  fixed_target_quat: [0.0, 0.0, 0.7071, 0.7071]
+
+  # Keep a short pause above the object, but do not rely on yaw control.
+  pre_grasp_orient: true
+  grasp_target_yaw_offset: 0.0
+  pre_grasp_yaw_threshold: 0.2
+  reorient_before_align: false
+  reorient_height_offset: 0.05
+  max_lift_delta_z: 0.08
+
+  # v3 intervention controls.
+  verify_object_following_steps: 5
+  object_following_distance_threshold: 0.10
+  use_quaternion_orientation_target: false
+  yaw_step_size: 0.20
+  stabilize_steps_after_yaw: 0
+  skip_broken_yaw_control: true

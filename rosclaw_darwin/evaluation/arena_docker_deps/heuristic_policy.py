@@ -231,6 +231,14 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     reorient_height_offset: float = 0.05
     max_lift_delta_z: float = 0.08
 
+    # v3 intervention controls.
+    verify_object_following_steps: int = 0
+    object_following_distance_threshold: float = 0.10
+    use_quaternion_orientation_target: bool = False
+    yaw_step_size: float = 0.20
+    stabilize_steps_after_yaw: int = 0
+    skip_broken_yaw_control: bool = False
+
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoGoalPosePolicyArgs":
         return cls(skill_hints=getattr(args, "skill_hints", None))
@@ -860,6 +868,19 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         self._reorient_height_offset = config.reorient_height_offset
         self._max_lift_delta_z = config.max_lift_delta_z
 
+        # v3 intervention controls.
+        self._verify_object_following_steps = config.verify_object_following_steps
+        self._object_following_distance_threshold = config.object_following_distance_threshold
+        self._use_quaternion_orientation_target = config.use_quaternion_orientation_target
+        self._yaw_step_size = config.yaw_step_size
+        self._stabilize_steps_after_yaw = config.stabilize_steps_after_yaw
+        self._skip_broken_yaw_control = config.skip_broken_yaw_control
+
+        # Object-following verification state.
+        self._object_following_verified = False
+        self._lift_start_object_pos: torch.Tensor | None = None
+        self._lift_start_eef_pos: torch.Tensor | None = None
+
         # Goal-pose specific hint effects.
         if "precision_placement" in self._skill_hints:
             self._success_threshold = max(0.03, self._success_threshold * 0.8)
@@ -897,6 +918,35 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if "centered_grasp" in self._skill_hints:
             self._grasp_target_yaw_offset = math.pi / 2.0
             self._pre_grasp_orient = True
+
+        # v3 recipe hint effects.
+        if "incremental_yaw_reorientation" in self._skill_hints:
+            self._yaw_step_size = max(0.05, self._yaw_step_size * 0.5)
+            self._stabilize_steps_after_yaw = max(5, self._stabilize_steps_after_yaw)
+        if "stabilize_after_rotation" in self._skill_hints:
+            self._stabilize_steps_after_yaw = max(10, self._stabilize_steps_after_yaw)
+        if "reduce_rotation_acceleration" in self._skill_hints:
+            self._max_lift_delta_z *= 0.7
+        if "use_object_following_grasp_metric" in self._skill_hints:
+            # The policy already uses object-following verification when enabled.
+            self._verify_object_following_steps = max(3, self._verify_object_following_steps)
+        if "verify_object_following" in self._skill_hints:
+            self._verify_object_following_steps = max(5, self._verify_object_following_steps)
+        if "use_effective_yaw_axis" in self._skill_hints:
+            # Rotational calibration showed relative yaw is broken; rely on
+            # quaternion target mode if the action space supports it.
+            self._use_quaternion_orientation_target = True
+        if "skip_broken_yaw" in self._skill_hints:
+            self._skip_broken_yaw_control = True
+            self._reorient_before_align = False
+            # Keep pre_grasp_orient as a short settling pause; the yaw command
+            # itself is disabled inside the PRE_GRASP_ORIENT state.
+            self._pre_grasp_orient = True
+
+        # If we explicitly skip broken yaw, make sure we do not try to use it.
+        if self._skip_broken_yaw_control:
+            self._reorient_before_align = False
+            self._require_orientation_alignment = False
 
     def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
         device = torch.device(env.unwrapped.device)
@@ -943,26 +993,34 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                     self._transition("DESCEND")
 
         elif self._state == "PRE_GRASP_ORIENT":
-            # Stay above the object and rotate the gripper to a stable grasp yaw.
+            # Stay above the object.  When yaw control is broken this phase acts as
+            # a short settling pause instead of an active reorientation.
             target = object_pos.clone()
             target[2] += self._approach_offset_z
             self._apply_position(action, eef_pos, eef_quat, target)
             action = self._set_gripper(action, open=True)
             object_yaw = self._extract_object_yaw(env, device)
-            if object_yaw is not None and eef_quat is not None:
+            if object_yaw is not None and eef_quat is not None and not self._skip_broken_yaw_control:
                 desired_yaw = object_yaw + self._grasp_target_yaw_offset
-                current_yaw = self._quat_to_yaw(eef_quat)
-                yaw_err = self._angle_diff(desired_yaw, current_yaw)
-                if self._relative_mode:
-                    action[..., 5] = torch.clamp(torch.as_tensor(yaw_err * 2.0, device=action.device), -1.0, 1.0)
+                target_quat_pre = torch.tensor(
+                    [0.0, 0.0, math.sin(desired_yaw / 2.0), math.cos(desired_yaw / 2.0)],
+                    device=device,
+                    dtype=eef_quat.dtype,
+                )
+                self._apply_orientation(action, eef_quat, target_quat_pre)
             horiz = torch.norm(object_pos[:2] - eef_pos[:2])
             z_err = abs(eef_pos[2] - target[2])
-            yaw_ok = object_yaw is None or abs(yaw_err) < self._pre_grasp_yaw_threshold
+            yaw_err = 0.0
+            if object_yaw is not None and eef_quat is not None and not self._skip_broken_yaw_control:
+                desired_yaw = object_yaw + self._grasp_target_yaw_offset
+                current_yaw = self._quat_to_yaw(eef_quat)
+                yaw_err = abs(self._angle_diff(desired_yaw, current_yaw))
+            yaw_ok = object_yaw is None or yaw_err < self._pre_grasp_yaw_threshold or self._skip_broken_yaw_control
             position_ok = horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5
-            # Do not get stuck trying to nudge the last few degrees; proceed to
-            # descend once we are above the object even if yaw is only roughly
-            # aligned.  The grasp can still succeed because the fingers are wide.
-            if position_ok and (yaw_ok or self._state_step >= 30):
+            # When yaw is broken, use a short pause (5 steps) to stabilise above
+            # the object before descending.
+            settle_ok = self._skip_broken_yaw_control and self._state_step >= 5
+            if position_ok and (yaw_ok or self._state_step >= 30 or settle_ok):
                 self._transition("DESCEND")
 
         elif self._state == "DESCEND":
@@ -1020,15 +1078,83 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             else:
                 near_target_xy = True
             if height_ok and near_target_xy:
-                if self._reorient_before_align and target_quat is not None:
+                if self._verify_object_following_steps > 0 and not self._object_following_verified:
+                    self._lift_start_object_pos = object_pos.clone()
+                    self._lift_start_eef_pos = eef_pos.clone()
+                    self._transition("VERIFY_OBJECT_FOLLOWING")
+                elif self._reorient_before_align and target_quat is not None and not self._skip_broken_yaw_control:
                     self._transition("REORIENT")
                 else:
                     self._transition("ALIGN")
+
+        elif self._state == "VERIFY_OBJECT_FOLLOWING":
+            # Brief hold at the current pose to verify the object is moving with
+            # the gripper before continuing.  This catches slips early instead of
+            # waiting for a later drop.
+            target = eef_pos.clone()
+            target[2] += self._lift_height
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._lift_kp_multiplier,
+                horizontal_scale=0.0,
+                max_delta=self._max_lift_delta_z,
+            )
+            action = self._set_gripper(action, open=False)
+            object_following = False
+            if self._lift_start_object_pos is not None and self._lift_start_eef_pos is not None:
+                object_delta = torch.norm(object_pos - self._lift_start_object_pos)
+                eef_delta = torch.norm(eef_pos - self._lift_start_eef_pos)
+                relative_delta = torch.norm(object_pos - eef_pos)
+                object_following = (
+                    object_delta > eef_delta * 0.3
+                    and relative_delta < self._object_following_distance_threshold
+                )
+            if self._state_step >= self._verify_object_following_steps:
+                self._object_following_verified = True
+                if object_following:
+                    if self._reorient_before_align and target_quat is not None and not self._skip_broken_yaw_control:
+                        self._transition("REORIENT")
+                    else:
+                        self._transition("ALIGN")
+                else:
+                    # Object did not follow; drop back to HOLD and log the failure.
+                    self._transition("HOLD")
 
         elif self._state == "REORIENT":
             # Keep the object high and over the target, but rotate the gripper (and
             # the grasped object) toward the target orientation before final
             # alignment.  This avoids dragging the object during lift.
+            if self._skip_broken_yaw_control:
+                self._transition("ALIGN")
+            else:
+                if target_pos is not None:
+                    target = target_pos.clone()
+                else:
+                    target = object_pos.clone()
+                target[2] += self._reorient_height_offset
+                self._apply_position(
+                    action,
+                    eef_pos,
+                    eef_quat,
+                    target,
+                    kp_multiplier=self._align_kp_multiplier,
+                    horizontal_scale=0.0,
+                    max_delta=self._align_max_delta,
+                )
+                self._apply_orientation(action, eef_quat, target_quat)
+                action = self._set_gripper(action, open=False)
+                if self._orientation_aligned(eef_quat, target_quat):
+                    if self._stabilize_steps_after_yaw > 0:
+                        self._transition("STABILIZE")
+                    else:
+                        self._transition("ALIGN")
+
+        elif self._state == "STABILIZE":
+            # Hold the gripper closed and steady after reorientation to let the
+            # grasp settle before alignment.
             if target_pos is not None:
                 target = target_pos.clone()
             else:
@@ -1041,11 +1167,10 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                 target,
                 kp_multiplier=self._align_kp_multiplier,
                 horizontal_scale=0.0,
-                max_delta=self._align_max_delta,
+                max_delta=self._align_max_delta * 0.5,
             )
-            self._apply_orientation(action, eef_quat, target_quat)
             action = self._set_gripper(action, open=False)
-            if self._orientation_aligned(eef_quat, target_quat):
+            if self._state_step >= self._stabilize_steps_after_yaw:
                 self._transition("ALIGN")
 
         elif self._state == "ALIGN":
@@ -1287,7 +1412,11 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         """Write an orientation command into ``action``."""
         if target_quat is None:
             return
-        if self._relative_mode:
+        if self._skip_broken_yaw_control:
+            return
+        if self._use_quaternion_orientation_target and action.shape[-1] >= 7:
+            self._apply_orientation_quaternion(action, eef_quat, target_quat)
+        elif self._relative_mode:
             # Relative controllers: command a yaw correction.
             if eef_quat is None:
                 return
@@ -1295,12 +1424,59 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                 yaw_current = self._quat_to_yaw(eef_quat)
                 yaw_target = self._quat_to_yaw(target_quat)
                 yaw_err = self._angle_diff(yaw_target, yaw_current)
-                action[..., 5] = torch.clamp(torch.as_tensor(yaw_err * 2.0, device=action.device), -1.0, 1.0)
+                yaw_err = torch.clamp(torch.as_tensor(yaw_err, device=action.device), -self._yaw_step_size, self._yaw_step_size)
+                action[..., 5] = torch.clamp(yaw_err * 2.0, -1.0, 1.0)
             except Exception:
                 pass
         else:
             # Absolute mode: command the target quaternion directly.
             action[..., 3:7] = target_quat[:4]
+
+    def _apply_orientation_quaternion(
+        self,
+        action: torch.Tensor,
+        eef_quat: torch.Tensor | None,
+        target_quat: torch.Tensor | None,
+    ) -> None:
+        """Command orientation as a (clamped) delta quaternion.
+
+        The relative-mode controller interprets ``action[..., 3:7]`` as a delta
+        quaternion when the action space is 8-dimensional.  We compute the delta
+        from the current end-effector orientation to the target orientation,
+        clamp the rotation magnitude to ``_yaw_step_size`` to avoid slip, and
+        write it into the action.
+        """
+        if eef_quat is None or target_quat is None:
+            return
+        try:
+            # Compute relative quaternion: q_rel = q_target * conj(q_current).
+            qw = eef_quat[3]
+            qx = -eef_quat[0]
+            qy = -eef_quat[1]
+            qz = -eef_quat[2]
+            tw = target_quat[3] * qw - target_quat[0] * qx - target_quat[1] * qy - target_quat[2] * qz
+            tx = target_quat[0] * qw + target_quat[3] * qx + target_quat[1] * qz - target_quat[2] * qy
+            ty = target_quat[1] * qw + target_quat[3] * qy + target_quat[2] * qx - target_quat[0] * qz
+            tz = target_quat[2] * qw + target_quat[3] * qz + target_quat[0] * qy - target_quat[1] * qx
+            rel = torch.stack([tx, ty, tz, tw], dim=0)
+            rel = rel / (torch.norm(rel) + 1e-8)
+
+            # Clamp the rotation angle to yaw_step_size.
+            angle = 2.0 * torch.acos(torch.clamp(rel[3], -1.0, 1.0))
+            if angle > self._yaw_step_size:
+                scale = self._yaw_step_size / (angle + 1e-8)
+                s = torch.sin(scale * angle / 2.0)
+                rel = torch.stack(
+                    [rel[0] / (torch.sin(angle / 2.0) + 1e-8) * s,
+                     rel[1] / (torch.sin(angle / 2.0) + 1e-8) * s,
+                     rel[2] / (torch.sin(angle / 2.0) + 1e-8) * s,
+                     torch.cos(scale * angle / 2.0)],
+                    dim=0,
+                )
+
+            action[..., 3:7] = rel[:4]
+        except Exception:
+            pass
 
     def _orientation_aligned(
         self, eef_quat: torch.Tensor | None, target_quat: torch.Tensor | None
@@ -1340,6 +1516,12 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             file=sys.stderr,
         )
         sys.stderr.flush()
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        super().reset(env_ids)
+        self._object_following_verified = False
+        self._lift_start_object_pos = None
+        self._lift_start_eef_pos = None
 
     @staticmethod
     def from_args(args: argparse.Namespace) -> "HeuristicServoGoalPosePolicy":

@@ -9,14 +9,17 @@ import yaml
 from pydantic import BaseModel
 
 from rosclaw_darwin.evaluation.result import EvaluationResult
+from rosclaw_darwin.evolution.hint_recipe import HintRecipeRegistry
 
 
 class SkillHint(BaseModel):
     name: str
-    source: str  # auto_from_failure | manual | validated_skill
+    source: str  # auto_from_failure | auto_from_signature_v3 | manual | validated_skill
     source_failure_type: str | None = None
+    source_recipe: str | None = None
     confidence: float
     rationale: str | None = None
+    parameter_overrides: dict[str, Any] = {}
 
 
 class FailureToHintRule(BaseModel):
@@ -79,6 +82,65 @@ class FailureToHintEngine:
 
     def suggest_from_result(self, result: EvaluationResult) -> list[SkillHint]:
         return self.suggest(result.failure_types)
+
+    def suggest_from_signatures(
+        self,
+        signatures: list[Any],
+        recipe_registry: HintRecipeRegistry | None = None,
+        task_id: str | None = None,
+    ) -> list[SkillHint]:
+        """Suggest skill hints from rich FailureSignature v3 tags.
+
+        Collects all ``signature_tags`` / ``hint_relevant_tags`` from the
+        signatures, queries the ``HintRecipeRegistry``, and returns hints
+        together with the merged ``parameter_overrides`` from matched recipes.
+        Falls back to the coarse failure-type engine if no signature tags are
+        available.
+        """
+        from rosclaw_darwin.evaluation.failure_signature import FailureSignature
+
+        tags: list[str] = []
+        for sig in signatures:
+            if isinstance(sig, FailureSignature):
+                tags.extend(sig.signature_tags or [])
+                tags.extend(sig.hint_relevant_tags or [])
+            elif isinstance(sig, dict):
+                tags.extend(sig.get("signature_tags") or [])
+                tags.extend(sig.get("hint_relevant_tags") or [])
+
+        if not tags and signatures:
+            # Fallback: use failure_type strings if no rich tags are present.
+            failure_types: dict[str, int] = {}
+            for sig in signatures:
+                if isinstance(sig, FailureSignature):
+                    failure_types[sig.failure_type] = failure_types.get(sig.failure_type, 0) + 1
+                elif isinstance(sig, dict):
+                    failure_types[sig.get("failure_type", "unknown")] = failure_types.get(
+                        sig.get("failure_type", "unknown"), 0
+                    ) + 1
+            return self.suggest(failure_types)
+
+        registry = recipe_registry or HintRecipeRegistry.from_yaml()
+        selected, overrides, matched = registry.select_hints(tags, task_id=task_id)
+
+        hints: list[SkillHint] = []
+        seen: set[str] = set()
+        for recipe in matched:
+            for hint_name in recipe.hints:
+                if hint_name in seen:
+                    continue
+                seen.add(hint_name)
+                hints.append(
+                    SkillHint(
+                        name=hint_name,
+                        source="auto_from_signature_v3",
+                        source_recipe=recipe.name,
+                        confidence=recipe.confidence,
+                        rationale=recipe.rationale,
+                        parameter_overrides=dict(overrides),
+                    )
+                )
+        return hints
 
     def to_dict(self, hints: list[SkillHint]) -> list[dict[str, Any]]:
         return [h.model_dump(mode="json") for h in hints]

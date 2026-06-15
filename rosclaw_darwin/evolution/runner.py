@@ -10,9 +10,11 @@ from typing import Any
 from pydantic import BaseModel
 
 from rosclaw_darwin.adapters.base import BaseEnvironmentAdapter
+from rosclaw_darwin.evaluation.failure_signature import infer_failure_signatures_for_run
 from rosclaw_darwin.evaluation.metrics import compute_evolution_metrics
 from rosclaw_darwin.evaluation.result import EvaluationResult
 from rosclaw_darwin.evolution.failure_to_hint import FailureToHintEngine
+from rosclaw_darwin.evolution.hint_recipe import HintRecipeRegistry
 from rosclaw_darwin.evolution.skill_registry import SkillCandidate, SkillRegistry
 from rosclaw_darwin.integration.how import HowBridge
 from rosclaw_darwin.integration.memory import MemoryBridge
@@ -145,21 +147,72 @@ class EvolutionRunner:
         policy2["memory_bonus"] = memory_bonus
 
         auto_hints: list[dict[str, Any]] = []
+        parameter_overrides: dict[str, Any] = {}
+        matched_recipes: list[str] = []
         if auto_skill_hints:
             engine = FailureToHintEngine.from_yaml(hint_rules_path)
-            auto_hints = engine.to_dict(engine.suggest_from_result(result1))
+            recipe_registry = HintRecipeRegistry.from_yaml()
+
+            # Prefer rich FailureSignature v3 tags when traces are available.
+            signatures: list[Any] = []
+            if result1.artifacts.get("episode_metrics"):
+                signatures = infer_failure_signatures_for_run(
+                    task=task,
+                    episode_metrics=result1.artifacts.get("episode_metrics", []),
+                    phase_traces=result1.artifacts.get("phase_traces"),
+                    traces=result1.artifacts.get("traces"),
+                )
+                signature_hints = engine.suggest_from_signatures(
+                    signatures,
+                    recipe_registry=recipe_registry,
+                    task_id=task.id,
+                )
+            else:
+                signature_hints = []
+
+            if signature_hints:
+                auto_hints = engine.to_dict(signature_hints)
+                # Merge parameter overrides from matched recipes.
+                for hint in signature_hints:
+                    parameter_overrides.update(hint.parameter_overrides)
+                matched_recipes = list(
+                    dict.fromkeys(h.source_recipe for h in signature_hints if h.source_recipe)
+                )
+            else:
+                # Fallback to coarse failure-type rules.
+                auto_hints = engine.to_dict(engine.suggest_from_result(result1))
+
             if auto_hints:
                 existing_hints = set(policy2.get("skill_hints", []))
                 new_hint_names = [h["name"] for h in auto_hints if h["name"] not in existing_hints]
                 policy2["skill_hints"] = list(existing_hints) + new_hint_names
+                if parameter_overrides:
+                    policy2.setdefault("policy_config_dict", {})
+                    policy2["policy_config_dict"] = {
+                        **policy2["policy_config_dict"],
+                        **parameter_overrides,
+                    }
                 policy2["_hint_source"] = {
                     "auto": auto_hints,
                     "manual": [h for h in policy2.get("skill_hints", []) if h in manual_or_validated_hints],
                     "loop": 1,
+                    "matched_recipes": matched_recipes,
+                    "parameter_overrides": parameter_overrides,
                 }
 
         skill_hints_log["loop_2"] = [
-            {"name": h, "source": "auto_from_failure" if any(h == ah["name"] for ah in auto_hints) else "manual", "confidence": 1.0}
+            {
+                "name": h,
+                "source": "auto_from_signature_v3"
+                if any(h == ah["name"] and ah.get("source") == "auto_from_signature_v3" for ah in auto_hints)
+                else "auto_from_failure"
+                if any(h == ah["name"] for ah in auto_hints)
+                else "manual",
+                "confidence": next(
+                    (ah.get("confidence", 1.0) for ah in auto_hints if ah["name"] == h),
+                    1.0,
+                ),
+            }
             for h in policy2.get("skill_hints", [])
         ]
 
