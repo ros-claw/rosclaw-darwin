@@ -116,21 +116,38 @@ ROSClaw-Darwin 已初步完成大纲中的核心闭环：
 
 - 报告：[`SKILL_HINT_PROGRESS_ABLATION_REPORT.md`](SKILL_HINT_PROGRESS_ABLATION_REPORT.md)。
 
-### Step 10b: Cross-task replication (ongoing / negative result on `goal_pose`)
+### Step 10b: Cross-task replication (updated results on ``goal_pose`` and ``pick_object``)
 
-- 新增 ``HeuristicServoGoalPosePolicy`` 与配置 ``configs/policies/heuristic_servo_goal_pose.yaml``。
-- 复用同一 ablation 脚本在真实 Arena ``goal_pose_001`` 上跑 3 episodes/condition：
+- **``goal_pose_001``** (cube reorientation):
+  - Improved base policy: added squeeze phase, lowered close threshold, consumed
+    ``longer_gripper_close`` / ``stabilize_lift`` hints in the policy.
+  - 5 episodes/condition:
 
 | condition | success_rate | progress | failure_counts |
 |---|---|---|---|
-| without_hints | 0.0 | 0.4942 | ``object_not_lifted``: 3 |
-| manual_hints | 0.0 | 0.4950 | ``object_not_lifted``: 3 |
-| auto_hints | 0.0 | 0.4886 | ``object_not_lifted``: 3 |
+| without_hints | 0.0 | 0.4895 | ``object_not_lifted``: 5 |
+| manual_hints | 0.0 | 0.5173 | ``object_not_lifted``: 3, ``target_not_reached_after_lift``: 2 |
+| auto_hints | 0.0 | 0.4733 | ``object_not_lifted``: 5 |
 
-- Auto hints 从 ``object_not_lifted`` 正确生成 ``longer_gripper_close``、
-  ``stronger_lift``、``stabilize_lift``，并被 policy 消费。
-- 未观察到正向 transfer：物体在到达目标姿态附近后掉落，抓取稳定性是主要瓶颈。
-- 报告：[`GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md`](GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md)。
+  - Manual hints produced a small positive progress gain (Δprogress = +0.028);
+    auto hints were slightly negative.  No episode succeeded, so grasp stability
+    remains the dominant bottleneck.
+
+- **``pick_object_001``** (closer to ``lift_object`` mechanics):
+  - Reused the lift servo policy on a new task that maps to the ``lift_object``
+    Arena environment.
+  - 5 episodes/condition:
+
+| condition | success_rate | progress | failure_counts |
+|---|---|---|---|
+| without_hints | 0.0 | 0.9533 | ``target_not_reached_after_lift``: 5 |
+| manual_hints | 0.0 | 0.9251 | ``target_not_reached_after_lift``: 5 |
+| auto_hints | 0.0 | 0.9335 | ``target_not_reached_after_lift``: 5 |
+
+  - High baseline progress but no success: the cube is lifted but not aligned
+    precisely to the command target.  Hints did not improve this small residual.
+  - Reports: [`GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md`](GOAL_POSE_SKILL_HINT_ABLATION_REPORT.md),
+    [`PICK_OBJECT_SKILL_HINT_ABLATION_REPORT.md`](PICK_OBJECT_SKILL_HINT_ABLATION_REPORT.md)。
 
 ### Step 11: Dashboard 升级 ✅
 
@@ -160,32 +177,38 @@ and report whether the hint produced measurable progress.
 
 **当前局限：**
 
-- 正向 transfer gain 仅验证于单个任务 `lift_object`。
-- 样本量为 50 episodes/condition，效应值 modest（+0.10–+0.12）。
-- 跨任务复现已在 ``goal_pose``（cube reorientation）上完成，但结果为负向：
-  policy 能到达目标姿态附近，却因抓取不稳定导致物体掉落，hint 未带来可测提升。
-  这说明 transfer 并非自动泛化到所有 manipulation 任务。
+- 正向 transfer gain 仍只在 ``lift_object`` 上观察到统计显著的成功提升。
+- 跨任务复现在 ``goal_pose`` 上为负向：policy 能到达目标姿态附近，但抓取不稳定导致
+  掉落；手动 hints 有小幅 progress 提升（Δprogress +0.028），自动 hints 仍未解决掉落。
+- 跨任务复现在 ``pick_object`` 上基线 progress 已高达 0.95，但 success_rate 仍为 0，
+  瓶颈是 lift 后的 target alignment；hints 未带来提升。
+- 样本量较小（``goal_pose`` / ``pick_object`` 各 5 episodes/condition），且
+  ``lift_object`` 的 50-episode 结果效应值 modest（+0.10–+0.12）。
 - Dashboard 仍是表格视图，未加入曲线图。
 
 ## 下一步建议（按优先级）
 
-1. **分析并解决 ``goal_pose`` 的抓取掉落问题**
-   - 可能的抓手：延长闭合时间、降低 gripper close threshold、增加柔顺抓取阶段、
-     或改用推/转策略。
-   - 若 mid-air 抓取确实不可行，选择更接近 ``lift_object`` 的第二任务（如
-     ``pick_object``）复现正向 transfer。
+1. **把 manual hint 参数自动化 / 改进 auto-hint 规则**
+   - ``goal_pose`` 上手动 hints 已经优于自动 hints，说明当前 ``object_not_lifted`` →
+     ``longer_gripper_close`` / ``stronger_lift`` / ``stabilize_lift`` 规则不够精准。
+   - 尝试从 ``target_not_reached_after_lift`` 或 mid-air drop signature 生成更具体的
+     hints（如 ``grasp_adjust``、``precision_placement``、``orient_adjust``）。
 
-2. **扩大 ``lift_object`` 样本量到 100 episodes/condition**
+2. **继续提升 ``goal_pose`` 抓取稳定性**
+   - 延长 squeeze 阶段、进一步降低 gripper close threshold、尝试 orientation-aware
+     grasp，或改用推/转策略。
+
+3. **把 ``pick_object`` 的成功 gap 补上**
+   - 基线 progress 0.95，只需解决 final alignment。可给 ``pick_object`` 增加一个
+     ALIGN phase（类似 ``goal_pose``）或专门调 ``target_tracking`` hint。
+
+4. **扩大 ``lift_object`` 样本量到 100 episodes/condition**
    - 进一步降低采样误差，稳定 Δsuccess 估计。
 
-3. **把 manual hint 参数也自动化**
-   - 当前 manual config 仍有人工调参成分。
-   - 可从同一 failure signature 自动生成显式 `policy_config_dict` 覆盖。
-
-4. **Dashboard 可视化增强**
+5. **Dashboard 可视化增强**
    - 为 `/lift-progress` 增加 eef distance / object height 曲线。
    - 为 `/ablations` 增加 bar chart 对比。
 
-5. **接入 learned policy baseline**
+6. **接入 learned policy baseline**
    - 解决 RSL-RL checkpoint/embodiment 不匹配问题。
    - 与 heuristic servo 进行真实 Arena 对比。

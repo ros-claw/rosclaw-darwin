@@ -4,20 +4,21 @@ strength: 0.7
 memory_bonus: 0.0
 policy_config_dict:
   approach_offset_z: 0.10
-  grasp_offset_z: -0.01
+  grasp_offset_z: 0.00
   lift_height: 0.0
   align_height_offset: 0.0
   lift_horizontal_scale: 0.0
-  lift_max_delta: 0.15
+  lift_max_delta: 0.12
   align_horizontal_scale: 0.2
   align_kp_multiplier: 0.5
-  align_max_delta: 0.08
+  align_max_delta: 0.06
   release_at_target: false
   require_orientation_alignment: false
   kp: 3.0
   grasp_dist_threshold: 0.04
-  gripper_close_threshold: 0.015
-  min_grasp_steps: 25
+  gripper_close_threshold: 0.012
+  min_grasp_steps: 30
+  grasp_squeeze_steps: 15
   min_release_steps: 10
   approach_horizontal_threshold: 0.05
   max_state_steps: 400

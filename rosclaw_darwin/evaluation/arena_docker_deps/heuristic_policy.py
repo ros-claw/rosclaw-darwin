@@ -72,6 +72,8 @@ class HeuristicServoLiftPolicyArgs:
     approach_horizontal_threshold: float = 0.05
     max_state_steps: int = 300
     success_threshold: float = 0.05
+    grasp_squeeze_steps: int = 0
+    lift_max_delta: float | None = None
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoLiftPolicyArgs":
@@ -229,7 +231,22 @@ class HeuristicServoLiftPolicy(PolicyBase):
         self._success_threshold = config.success_threshold
         self._lift_kp_multiplier = getattr(config, "lift_kp_multiplier", 1.0)
         self._lift_horizontal_scale = getattr(config, "lift_horizontal_scale", 0.6)
+        self._grasp_squeeze_steps = getattr(config, "grasp_squeeze_steps", 0)
+        self._lift_max_delta = getattr(config, "lift_max_delta", None)
 
+        if "longer_gripper_close" in self._skill_hints:
+            self._min_grasp_steps += 5
+            self._grasp_squeeze_steps += 10
+            self._gripper_close_threshold *= 0.8
+        if "stabilize_lift" in self._skill_hints:
+            # Smaller per-step deltas and lower horizontal coupling reduce
+            # oscillation / shear that can break a fragile grasp.
+            if self._lift_max_delta is not None:
+                self._lift_max_delta *= 0.75
+            else:
+                self._lift_max_delta = 0.12
+            self._kp *= 0.9
+            self._lift_horizontal_scale = max(0.0, self._lift_horizontal_scale - 0.2)
         if "efficient_execution" in self._skill_hints:
             self._kp *= 1.5
             self._approach_offset_z *= 0.75
@@ -302,11 +319,16 @@ class HeuristicServoLiftPolicy(PolicyBase):
 
         elif self._state == "GRASP":
             action = self._set_gripper(action, open=False)
-            # Transition once we have allowed enough steps for the fingers to close.
-            # Requiring a specific gripper joint position is fragile because the
-            # object itself keeps the fingers slightly open.
+            # Transition once the fingers have had time to close.  When the
+            # gripper position reading is available we additionally wait until it
+            # is below the close threshold, with an optional squeeze extension
+            # for objects that need sustained force before lifting.
+            squeeze_deadline = self._min_grasp_steps + self._grasp_squeeze_steps
             if self._state_step >= self._min_grasp_steps:
-                self._transition("LIFT")
+                if gripper_pos is not None and gripper_pos < self._gripper_close_threshold:
+                    self._transition("LIFT")
+                elif self._state_step >= squeeze_deadline:
+                    self._transition("LIFT")
 
         elif self._state == "LIFT":
             if target_pos is not None:
@@ -321,6 +343,7 @@ class HeuristicServoLiftPolicy(PolicyBase):
                 target,
                 kp_multiplier=self._lift_kp_multiplier,
                 horizontal_scale=self._lift_horizontal_scale,
+                max_delta=self._lift_max_delta,
             )
             action = self._set_gripper(action, open=False)
             # Transition to HOLD when the object is close to the command target
@@ -704,6 +727,11 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if "orient_adjust" in self._skill_hints:
             self._require_orientation_alignment = True
             self._orientation_threshold *= 0.8
+        if "stabilize_lift" in self._skill_hints:
+            if self._align_max_delta is not None:
+                self._align_max_delta *= 0.75
+            else:
+                self._align_max_delta = 0.06
 
     def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
         device = torch.device(env.unwrapped.device)

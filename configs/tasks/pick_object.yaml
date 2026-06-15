@@ -1,0 +1,38 @@
+id: pick_object_001
+name: Pick Object
+version: "1.0"
+description: Pick the cube from the table.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Pick
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 400
+  max_episodes: 5
+  success_conditions: [object_lifted]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pick]
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: lift_object
+    object: dex_cube
+    embodiment: franka_ik
