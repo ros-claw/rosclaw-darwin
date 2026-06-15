@@ -201,6 +201,8 @@ class ArenaRunner:
                 "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/policy/onnx_action_policy.py:/workspace/isaaclab_arena/policy/onnx_action_policy.py",
                 # Mount HDF5 recording directory (persist dataset recordings across container restarts)
                 "-v", "/tmp/rosclaw_data/hdf5:/tmp/isaaclab/logs",
+                # Mount episode trace directory so per-step traces survive container exit.
+                "-v", "/tmp/rosclaw_data/traces:/workspace/data/traces",
                 # Mount test_data with official pretrained models (lift_object_model.pt)
                 "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/tests/test_data:/workspace/isaaclab_arena/tests/test_data",
                 # Mount training logs/checkpoints so RSL-RL policies can load trained models

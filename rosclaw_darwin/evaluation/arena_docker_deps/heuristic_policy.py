@@ -29,7 +29,14 @@ except Exception:  # pragma: no cover - host side does not have IsaacLab-Arena i
             self.config = config
 
 
-_TRACE_PATH = "/workspace/data/episode_trace.jsonl"
+_TRACE_DIR = os.environ.get("ROSCLAW_TRACE_DIR", "/workspace/data/traces")
+_TRACE_PATH = os.path.join(_TRACE_DIR, "episode_trace.jsonl")
+
+# Ensure the trace directory exists (host bind mount may not create it).
+try:
+    os.makedirs(_TRACE_DIR, exist_ok=True)
+except Exception:
+    pass
 
 
 def _append_trace(step: dict[str, Any]) -> None:
@@ -1020,6 +1027,13 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             self._transition("HOLD")
 
         if object_pos is not None:
+            object_yaw = self._extract_object_yaw(env, device)
+            target_yaw = None
+            if target_quat is not None and target_quat.numel() >= 4:
+                target_yaw = self._quat_to_yaw(target_quat)
+            orientation_error = None
+            if object_yaw is not None and target_yaw is not None:
+                orientation_error = self._angle_diff(target_yaw, object_yaw)
             _append_trace({
                 "episode": self._episode_idx,
                 "step": step,
@@ -1035,6 +1049,9 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                 "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
                 "action_norm": float(torch.linalg.norm(action).item()),
                 "phase": self._state,
+                "object_yaw": float(object_yaw) if object_yaw is not None else None,
+                "target_yaw": float(target_yaw) if target_yaw is not None else None,
+                "orientation_error": float(orientation_error) if orientation_error is not None else None,
             })
 
         return action
