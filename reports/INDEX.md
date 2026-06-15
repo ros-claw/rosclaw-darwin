@@ -26,6 +26,7 @@
 - [Goal Pose Trace Schema v2 Report](GOAL_POSE_TRACE_SCHEMA_V2_REPORT.md) — separating end-effector yaw from object yaw for physical diagnosis.
 - [Gripper Calibration Report](GRIPPER_CALIBRATION_REPORT.md) — empty vs. cube-blocked gripper closure limits.
 - [Rotational Action Calibration Report](ROTATIONAL_ACTION_CALIBRATION_REPORT.md) — mapping action[3:6] to end-effector rotation.
+- [Goal Pose Grasp Stability Metrics v3 Report](GOAL_POSE_GRASP_STABILITY_METRICS_V3_REPORT.md) — object-following stability analysis of the latest goal_pose trace.
 - [Goal Pose Diagnostic Report for External Review](GOAL_POSE_DIAGNOSTIC_REPORT_FOR_EXTERNAL_REVIEW.md) — per-step trace diagnosis of why the cube slips, with questions for external experts.
 
 ## Evolution and ablation
