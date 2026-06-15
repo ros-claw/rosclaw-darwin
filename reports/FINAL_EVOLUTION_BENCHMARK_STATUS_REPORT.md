@@ -2,31 +2,40 @@
 
 ## 1. Is `lift_object` evolution evidence stable?
 
-**Partially.**  The 50-episode single-seed run reported earlier showed auto
-hints Δsuccess ≈ +0.10.  The new multi-seed validation (60 episodes per
-condition) shows a positive trend:
+**No — the positive hint effect disappeared under a larger, stable multi-seed
+run.**  The hardened validation ran **50 episodes per seed × 3 seeds = 150
+episodes per condition** with stable per-episode metrics and no missing data:
 
-- without_hints: 0.317
-- auto_hints: 0.383
-- Δsuccess = +0.067
+- without_hints: 0.5133
+- manual_hints: 0.4467
+- auto_hints: 0.5067
 
-However, the Fisher exact p-value is 0.44 and the Wilson CIs overlap heavily.
-Two of nine runs returned missing metrics, which adds uncertainty.  The
-evidence is **directionally stable** but not yet statistically robust.
+Auto hints are now numerically **below** the without-hints baseline, and manual
+hints are also slightly lower.  Wilson 95% CIs overlap heavily.  The earlier
+single-seed / smaller-sample positive Δsuccess appears to have been sampling
+variation rather than a reliable effect.
 
 ## 2. Do auto hints still produce a positive lift?
 
-**Yes, directionally.**  Auto hints improved success rate in the multi-seed run,
-but the effect is modest and not significant at conventional levels.
+**No.**  In the hardened run auto hints do **not** improve success rate over the
+base `heuristic_servo_lift` policy.  The point estimate is slightly negative and
+the p-value is far above conventional thresholds.
 
 ## 3. What are the CI / p-value / effect size?
 
-| comparison | Δsuccess | Fisher exact p | odds_ratio | Δprogress |
-|---|---|---|---|---|
-| auto vs without | +0.0666 | 0.444 | 1.33 | +0.0086 |
-| manual vs without | +0.0333 | 0.699 | 1.16 | -0.0001 |
+| comparison | Δsuccess | Δprogress | Fisher exact p | odds_ratio | progress Δ 95% CI |
+|---|---|---|---|---|---|
+| auto_hints vs without | −0.0066 | +0.0002 | 0.908 | 0.974 | [−0.0076, 0.0081] |
+| manual_hints vs without | −0.0666 | +0.0012 | 0.248 | 0.767 | [−0.0064, 0.0089] |
 
-Success-rate Wilson CIs: without [0.213, 0.442], auto [0.271, 0.510].
+Per-condition Wilson 95% CIs:
+- without_hints: [0.434, 0.592]
+- manual_hints: [0.369, 0.527]
+- auto_hints: [0.428, 0.586]
+
+The current auto-hint recipe (`stronger_lift`, `target_tracking`) does not
+produce a statistically reliable benefit on `lift_object` at this baseline
+performance level.
 
 ## 4. What is `pick_object`'s success gap?
 
@@ -131,8 +140,9 @@ implemented; the Dashboard still uses tables.  See
 ```text
 ROSClaw-Darwin has a working failure-signature-driven hint pipeline.
 The Arena-side success metric is now task-aware (object_lifted vs pose_reached).
-On lift_object, auto hints show a repeated positive success-rate trend,
-but the effect is modest and not yet statistically robust.
+On lift_object, the base heuristic_servo_lift policy achieves ~51% success.
+Hints do not currently improve lift_object success in a larger stable multi-seed
+run; the earlier positive trend appears to have been sampling variation.
 On pick_object, the base servo policy achieves 100% success once the metric
 matches the task definition.
 Cross-task transfer is not proven; goal_pose remains unsolved.
@@ -143,7 +153,8 @@ Cross-task transfer is not proven; goal_pose remains unsolved.
 ```text
 Universal cross-task skill transfer.
 Validated transferable skills.
-Statistically significant evolution evidence on all tasks.
+Statistically significant evolution evidence on lift_object.
+Hints reliably improve the lift_object baseline.
 ```
 
 ## Files produced in this round
@@ -182,6 +193,13 @@ Statistically significant evolution evidence on all tasks.
 
 ## Pending
 
-All background ablations started in this round have now completed.  The next
-priority is to harden `lift_object` statistical evidence and to find a stronger
-grasp-stability strategy for `goal_pose`.
+The hardened `lift_object` multi-seed run has completed.  The auto-hint recipe
+does not show a reliable benefit, so the next priorities are:
+
+1. Re-examine the `stronger_lift` + `target_tracking` recipe to determine whether
+   the hints are actually being applied, whether the parameters are large enough
+   to change behavior, or whether the base policy is already near a local
+   performance ceiling for this task.
+2. Continue seeking a stronger grasp-stability strategy for `goal_pose`.
+3. Do not claim transferable skill evolution on `lift_object` until a positive,
+   significant effect is reproduced in a follow-up validation.
