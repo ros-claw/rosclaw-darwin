@@ -1954,3 +1954,239 @@ class ActionCalibrationPolicy(PolicyBase):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "ActionCalibrationPolicy":
         return ActionCalibrationPolicy(ActionCalibrationPolicyArgs.from_cli_args(args))
+
+
+@dataclass
+class GripperCalibrationPolicyArgs:
+    """Configuration for gripper empty/blocked-close calibration."""
+
+    skill_hints: list[str] | None = None
+    scenario: str = "empty_close"  # empty_close | blocked_close
+    close_command: float = -1.0
+    close_steps: int = 100
+    approach_offset_z: float = 0.12
+    grasp_offset_z: float = 0.0
+    kp: float = 5.0
+    grasp_dist_threshold: float = 0.03
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "GripperCalibrationPolicyArgs":
+        return cls(
+            skill_hints=getattr(args, "skill_hints", None),
+            scenario=getattr(args, "scenario", "empty_close"),
+            close_command=float(getattr(args, "close_command", -1.0)),
+            close_steps=int(getattr(args, "close_steps", 100)),
+            approach_offset_z=float(getattr(args, "approach_offset_z", 0.12)),
+            grasp_offset_z=float(getattr(args, "grasp_offset_z", 0.0)),
+            kp=float(getattr(args, "kp", 5.0)),
+            grasp_dist_threshold=float(getattr(args, "grasp_dist_threshold", 0.03)),
+        )
+
+
+class GripperCalibrationPolicy(HeuristicServoLiftPolicy):
+    """Calibration policy for measuring gripper closure limits.
+
+    Two scenarios:
+      - ``empty_close``: keep the end-effector at its initial pose and command
+        the gripper to close.  Records the minimum open width achievable
+        without any object between the fingers.
+      - ``blocked_close``: servo above the object, descend to grasp height, and
+        command the gripper to close.  Records the open width when the cube is
+        between the fingers.
+
+    The trace contains ``gripper_pos`` and ``close_command`` so the host can
+    compare closure limits across command magnitudes.
+    """
+
+    name = "gripper_calibration"
+    config_class = GripperCalibrationPolicyArgs
+
+    def __init__(self, config: GripperCalibrationPolicyArgs):
+        # Initialise PolicyBase directly so we can set our own state machine
+        # without inheriting the full servo defaults from HeuristicServoLiftPolicy.
+        PolicyBase.__init__(self, config)
+        self._step = 0
+        self._skill_hints = set()
+        self._relative_mode: bool | None = None
+        self._action_scale: float = 1.0
+        self._episode_idx = 0
+
+        self._scenario = config.scenario
+        self._close_command = config.close_command
+        self._close_steps = config.close_steps
+        self._approach_offset_z = config.approach_offset_z
+        self._grasp_offset_z = config.grasp_offset_z
+        self._kp = config.kp
+        self._grasp_dist_threshold = config.grasp_dist_threshold
+
+        # For blocked_close we still use a small state machine.
+        if self._scenario == "blocked_close":
+            self._state = "APPROACH"
+        else:
+            self._state = "CLOSE"
+        self._state_step = 0
+
+        try:
+            if os.path.exists(_TRACE_PATH):
+                os.remove(_TRACE_PATH)
+        except Exception:
+            pass
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        step = self._step
+        self._step += 1
+        self._state_step += 1
+
+        if step == 0:
+            import sys
+            print(
+                f"[GRIPPER_CALIBRATION] scenario={self._scenario} "
+                f"close_command={self._close_command:.3f} close_steps={self._close_steps}",
+                file=sys.stderr,
+            )
+            sys.stderr.flush()
+
+        if self._relative_mode is None:
+            self._infer_controller_mode(env)
+
+        eef_pos, eef_quat, object_pos, gripper_pos, _target_pos = self._extract_state(
+            observation, env, device
+        )
+
+        if self._state == "APPROACH":
+            target = object_pos.clone() if object_pos is not None else eef_pos.clone()
+            target[2] += self._approach_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            if object_pos is not None and eef_pos is not None:
+                horiz = torch.norm(object_pos[:2] - eef_pos[:2])
+                z_err = abs(eef_pos[2] - target[2])
+                if horiz < 0.05 and z_err < self._approach_offset_z * 0.5:
+                    self._transition("DESCEND")
+
+        elif self._state == "DESCEND":
+            target = object_pos.clone() if object_pos is not None else eef_pos.clone()
+            target[2] += self._grasp_offset_z
+            self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper(action, open=True)
+            if object_pos is not None and eef_pos is not None:
+                if torch.norm(target - eef_pos) < self._grasp_dist_threshold:
+                    self._transition("CLOSE")
+
+        elif self._state == "CLOSE":
+            # Stay at the current commanded position; do not drag the arm while
+            # measuring gripper closure.
+            if self._scenario == "blocked_close" and object_pos is not None:
+                target = object_pos.clone()
+                target[2] += self._grasp_offset_z
+                self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper_value(action, self._close_command)
+            if self._state_step >= self._close_steps:
+                self._transition("HOLD")
+
+        elif self._state == "HOLD":
+            if self._scenario == "blocked_close" and object_pos is not None:
+                target = object_pos.clone()
+                target[2] += self._grasp_offset_z
+                self._apply_position(action, eef_pos, eef_quat, target)
+            action = self._set_gripper_value(action, self._close_command)
+
+        if object_pos is not None:
+            _append_trace({
+                "episode": self._episode_idx,
+                "step": step,
+                "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
+                "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "object_x": float(object_pos[0].item()),
+                "object_y": float(object_pos[1].item()),
+                "object_z": float(object_pos[2].item()),
+                "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
+                "close_command": self._close_command,
+                "action_norm": float(torch.linalg.norm(action).item()),
+                "phase": self._state,
+            })
+
+        return action
+
+    def _set_gripper_value(self, action: torch.Tensor, value: float) -> torch.Tensor:
+        """Set the gripper command dimension to an arbitrary signed value."""
+        if self._relative_mode and action.shape[-1] >= 7:
+            action[..., 6] = value
+        elif action.shape[-1] >= 8:
+            action[..., -1] = value
+        return action
+
+    def _apply_position(
+        self,
+        action: torch.Tensor,
+        eef_pos: torch.Tensor | None,
+        eef_quat: torch.Tensor | None,
+        target: torch.Tensor,
+        kp_multiplier: float = 1.0,
+        horizontal_scale: float = 1.0,
+        max_delta: float | None = None,
+    ) -> None:
+        """Write a position command using body-frame relative mapping.
+
+        The Franka relative controller is yawed ~180 deg at reset, so
+        world-frame deltas must be rotated into the end-effector body frame.
+        This mirrors the mapping used by ``HeuristicServoGoalPosePolicy``.
+        """
+        if eef_pos is None:
+            return
+        delta_world = self._kp * kp_multiplier * (target - eef_pos)
+        if horizontal_scale != 1.0:
+            delta_world[:2] *= horizontal_scale
+
+        if max_delta is None:
+            max_delta = 0.5 if self._relative_mode else 0.1
+        delta_world = torch.clamp(delta_world, -max_delta, max_delta)
+
+        if self._relative_mode:
+            body_delta = self._world_delta_to_body(delta_world, eef_quat)
+            cmd = body_delta / self._action_scale
+            action[..., :3] = torch.clamp(cmd, -1.0, 1.0)
+            if action.shape[-1] >= 6:
+                action[..., 3:6] = 0.0
+        else:
+            action[..., :3] = eef_pos + delta_world
+            if action.shape[-1] >= 7:
+                quat = (
+                    eef_quat
+                    if eef_quat is not None and eef_quat.numel() >= 4
+                    else torch.tensor([0.0, 0.0, 0.0, 1.0], device=action.device, dtype=action.dtype)
+                )
+                action[..., 3:7] = quat[:4]
+
+    def _world_delta_to_body(
+        self, delta_world: torch.Tensor, eef_quat: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Rotate a world-frame delta into the end-effector body frame."""
+        if eef_quat is None or eef_quat.numel() < 4:
+            return delta_world
+        try:
+            from isaaclab.utils.math import quat_rotate_inverse
+
+            return quat_rotate_inverse(eef_quat.unsqueeze(0), delta_world.unsqueeze(0)).squeeze()
+        except Exception:
+            return delta_world
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        self._step = 0
+        self._state_step = 0
+        self._episode_idx += 1
+        if self._scenario == "blocked_close":
+            self._state = "APPROACH"
+        else:
+            self._state = "CLOSE"
+
+    @staticmethod
+    def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        return parser
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "GripperCalibrationPolicy":
+        return GripperCalibrationPolicy(GripperCalibrationPolicyArgs.from_cli_args(args))

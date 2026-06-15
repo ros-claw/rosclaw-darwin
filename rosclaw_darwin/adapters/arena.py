@@ -1005,6 +1005,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "heuristic_policy.CheatCubeGoalPosePolicy"
             if policy_type == "action_calibration":
                 policy_type = "heuristic_policy.ActionCalibrationPolicy"
+            if policy_type == "gripper_calibration":
+                policy_type = "heuristic_policy.GripperCalibrationPolicy"
             if policy_type == "replay_action":
                 policy_type = "isaaclab_arena.policy.replay_action_policy.ReplayActionPolicy"
             if policy_type == "torchscript":

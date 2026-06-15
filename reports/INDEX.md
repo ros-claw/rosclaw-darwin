@@ -24,6 +24,7 @@
 - [Pick Object Success Gap Report](PICK_OBJECT_SUCCESS_GAP_REPORT.md) — why progress ≈ 0.95 but success = 0, and the ALIGN/HOLD intervention.
 - [Goal Pose Grasp Stability Report](GOAL_POSE_GRASP_STABILITY_REPORT.md) — grasp instability diagnosis and squeeze/stabilize intervention.
 - [Goal Pose Trace Schema v2 Report](GOAL_POSE_TRACE_SCHEMA_V2_REPORT.md) — separating end-effector yaw from object yaw for physical diagnosis.
+- [Gripper Calibration Report](GRIPPER_CALIBRATION_REPORT.md) — empty vs. cube-blocked gripper closure limits.
 - [Goal Pose Diagnostic Report for External Review](GOAL_POSE_DIAGNOSTIC_REPORT_FOR_EXTERNAL_REVIEW.md) — per-step trace diagnosis of why the cube slips, with questions for external experts.
 
 ## Evolution and ablation
