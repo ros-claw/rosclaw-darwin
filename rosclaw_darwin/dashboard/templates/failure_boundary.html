@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Failure Boundary - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🚧 Failure Boundary</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Contact-Diagnosis / Adaptive-Recovery Aggregate</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  {% if data.phase_scores %}
+  <table>
+    <tr><th>Phase</th><th>Score</th></tr>
+    {% for phase, score in data.phase_scores.items() %}
+    <tr>
+      <td><code>{{ phase }}</code></td>
+      <td class="metric">{{ "%.4f"|format(score or 0.0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if data.fba_result %}
+  <h3>FBA Result</h3>
+  <pre style="background:#f8f9fa; padding:1rem; border-radius:4px; overflow:auto;"><code>{{ data.fba_result|tojson(indent=2) }}</code></pre>
+  {% endif %}
+  <div style="margin-top:1rem;">
+    <img src="/failure-boundary/chart.svg" alt="Failure boundary chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No failure boundary data yet. Run contact-diagnosis diagnostics to populate.</p></div>
+{% endif %}
+{% endblock %}

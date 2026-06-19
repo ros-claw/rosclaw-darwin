@@ -18,7 +18,7 @@ objects:
     affordances: [graspable]
 embodiment:
   robot: franka
-  control_mode: ik
+  control_mode: ik_abs
 constraints: []
 eval:
   max_steps: 300
@@ -35,4 +35,4 @@ metadata:
   arena_env_args:
     environment: cube_goal_pose
     object: dex_cube
-    embodiment: franka_ik
+    embodiment: franka_ik_abs

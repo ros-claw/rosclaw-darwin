@@ -61,14 +61,55 @@ def test_find_recipes_priority():
     assert recipes[0].name == "precision_alignment"
 
 
+def test_select_hints_structural_overrides_and_strategy_switches():
+    registry = HintRecipeRegistry(
+        recipes=[
+            HintRecipe(
+                name="regrasp_recovery",
+                source="auto_rule",
+                trigger_tags=["weak_contact_no_lift"],
+                hints=["enable_regrasp"],
+                parameter_overrides={"min_grasp_steps": 35},
+                structural_overrides={
+                    "enable_regrasp": True,
+                    "max_regrasp_attempts": 2,
+                },
+                strategy_switches=["contact_verify", "lift_verify"],
+                confidence=0.7,
+            ),
+            HintRecipe(
+                name="alignment_fallback",
+                source="auto_rule",
+                trigger_tags=["weak_contact_no_lift"],
+                hints=["precision_target_tracking"],
+                structural_overrides={"enable_regrasp": False},
+                strategy_switches=["slow_final_align"],
+                confidence=0.6,
+            ),
+        ]
+    )
+    hints, overrides, matched, structural_overrides, strategy_switches = registry.select_hints(
+        ["weak_contact_no_lift"]
+    )
+    assert "enable_regrasp" in hints
+    assert overrides.get("min_grasp_steps") == 35
+    # Later structural overrides should overwrite earlier ones.
+    assert structural_overrides.get("enable_regrasp") is False
+    assert structural_overrides.get("max_regrasp_attempts") == 2
+    # Strategy switches are deduplicated while preserving order.
+    assert strategy_switches == ["contact_verify", "lift_verify", "slow_final_align"]
+
+
 def test_select_hints_dedup_and_overrides():
     registry = _make_registry()
-    hints, overrides, matched = registry.select_hints(["final_alignment_gap"])
+    hints, overrides, matched, structural_overrides, strategy_switches = registry.select_hints(["final_alignment_gap"])
     assert "precision_target_tracking" in hints
     # Duplicate hint from lower-precedence manual recipe is deduplicated.
     assert hints.count("precision_target_tracking") == 1
     assert overrides.get("align_kp") == 0.6
     assert len(matched) >= 1
+    assert isinstance(structural_overrides, dict)
+    assert isinstance(strategy_switches, list)
 
 
 def test_conflict_resolution_prefers_grasp_stability():
@@ -90,7 +131,7 @@ def test_conflict_resolution_prefers_grasp_stability():
             ),
         ]
     )
-    hints, _, _ = registry.select_hints(["final_alignment_gap", "unstable_grasp"])
+    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap", "unstable_grasp"])
     # unstable_grasp recipe has higher precedence, so its hints come first.
     assert "longer_squeeze" in hints
     # faster_approach is incompatible with stabilize_lift / longer_squeeze.
@@ -126,5 +167,5 @@ def test_validated_only_filter():
             ),
         ]
     )
-    hints, _, _ = registry.select_hints(["final_alignment_gap"], validated_only=True)
+    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap"], validated_only=True)
     assert hints == ["precision_target_tracking"]

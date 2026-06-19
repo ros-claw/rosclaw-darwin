@@ -252,6 +252,169 @@ def plot_failure_signature_distribution(runs: list[dict[str, Any]], width: int =
     return svg
 
 
+def plot_official_benchmark(success_rate: float, failure_distribution: dict[str, int], width: int = 800, height: int = 320) -> str:
+    """Bar chart of failure distribution plus a text metric for the official benchmark."""
+    if not failure_distribution:
+        return _svg_start(width, height, "No benchmark data") + _text(width / 2, height / 2, "No benchmark data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 40, "bottom": 100, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Official benchmark")
+    svg += _text(width / 2, 24, f"Official Benchmark — success rate {success_rate:.1%}", anchor="middle", size=14, color="#1a1a2e")
+
+    labels = list(failure_distribution.keys())
+    values = [failure_distribution[k] for k in labels]
+    max_v = max(values) if values else 1
+
+    bar_w = min(60, plot_w / max(len(labels), 1) * 0.6)
+    spacing = plot_w / max(len(labels), 1)
+
+    for i, (label, val) in enumerate(zip(labels, values)):
+        x = margin["left"] + i * spacing + spacing / 2 - bar_w / 2
+        h = val / max_v * plot_h if max_v else 0
+        svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, _bar_color(i), rx=2)
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h - h - 6, str(val), anchor="middle", size=10, color="#212529")
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h + 18, label, anchor="end", size=10, color="#495057", rotate=45)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    ticks = _nice_ticks(0, max_v)
+    for t in ticks:
+        ty = margin["top"] + plot_h - t / max_v * plot_h if max_v else margin["top"] + plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{int(t)}", anchor="end", size=10, color="#495057")
+
+    svg += _svg_end()
+    return svg
+
+
+def plot_target_yaw_matrix(per_target_yaw: dict[str, dict[str, float]], width: int = 900, height: int = 400) -> str:
+    """Grouped bars for lifted_rate / orientation_achieved_rate / env_success_rate per target yaw."""
+    if not per_target_yaw:
+        return _svg_start(width, height, "No target yaw data") + _text(width / 2, height / 2, "No target yaw data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 140, "bottom": 80, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Target yaw matrix")
+    svg += _text(width / 2, 24, "Target Yaw Generalization Matrix", anchor="middle", size=14, color="#1a1a2e")
+
+    yaws = sorted(per_target_yaw.keys(), key=lambda k: float(k) if k.replace(".", "", 1).replace("-", "", 1).isdigit() else k)
+    n = len(yaws)
+    group_w = plot_w / n
+    bar_w = group_w * 0.22
+    metrics = ["lifted_rate", "orientation_achieved_rate", "env_success_rate"]
+    metric_labels = ["lifted", "orient", "env succ"]
+
+    for i, yaw in enumerate(yaws):
+        gx = margin["left"] + i * group_w
+        data = per_target_yaw.get(yaw, {})
+        for j, metric in enumerate(metrics):
+            val = float(data.get(metric, 0.0) or 0.0)
+            x = gx + group_w * 0.15 + j * (bar_w + 4)
+            h = max(1, val * plot_h)
+            svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, _bar_color(j), rx=2)
+        svg += _text(gx + group_w / 2, margin["top"] + plot_h + 20, yaw, anchor="middle", size=10, color="#495057", rotate=30)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ty = margin["top"] + plot_h - t * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    lx = margin["left"] + plot_w + 20
+    ly = margin["top"] + 20
+    for j, label in enumerate(metric_labels):
+        svg += _rect(lx, ly + j * 22, 12, 12, _bar_color(j), rx=2)
+        svg += _text(lx + 18, ly + j * 22 + 10, label, size=10)
+
+    svg += _svg_end()
+    return svg
+
+
+def plot_ood_adaption(conditions: dict[str, dict[str, float]], width: int = 800, height: int = 320) -> str:
+    """Grouped bars for success_rate per OOD condition."""
+    if not conditions:
+        return _svg_start(width, height, "No OOD data") + _text(width / 2, height / 2, "No OOD data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 40, "bottom": 100, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "OOD adaptation")
+    svg += _text(width / 2, 24, "OOD Adaptation — Success Rate by Condition", anchor="middle", size=14, color="#1a1a2e")
+
+    labels = sorted(conditions.keys())
+    n = len(labels)
+    group_w = plot_w / n
+    bar_w = group_w * 0.5
+
+    for i, label in enumerate(labels):
+        gx = margin["left"] + i * group_w
+        val = float(conditions[label].get("success_rate", 0.0) or 0.0)
+        x = gx + group_w / 2 - bar_w / 2
+        h = max(1, val * plot_h)
+        svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, _bar_color(i), rx=2)
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h - h - 6, f"{val:.2f}", anchor="middle", size=10, color="#212529")
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h + 18, label, anchor="end", size=10, color="#495057", rotate=45)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ty = margin["top"] + plot_h - t * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    svg += _svg_end()
+    return svg
+
+
+def plot_failure_boundary(fba_result: dict[str, Any] | None = None, phase_scores: dict[str, float] | None = None, width: int = 800, height: int = 320) -> str:
+    """Simple bar/number display for failure boundary analysis."""
+    scores = phase_scores or {}
+    if fba_result and not scores:
+        scores = fba_result.get("phase_scores", {})
+    if not scores:
+        return _svg_start(width, height, "No failure boundary data") + _text(width / 2, height / 2, "No failure boundary data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 40, "bottom": 100, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Failure boundary")
+    svg += _text(width / 2, 24, "Failure Boundary Analysis", anchor="middle", size=14, color="#1a1a2e")
+
+    labels = sorted(scores.keys())
+    values = [float(scores[k] or 0.0) for k in labels]
+    max_v = max(max(values, default=1), 1.0)
+
+    n = len(labels)
+    bar_w = min(60, plot_w / max(n, 1) * 0.6)
+    spacing = plot_w / max(n, 1)
+
+    for i, (label, val) in enumerate(zip(labels, values)):
+        x = margin["left"] + i * spacing + spacing / 2 - bar_w / 2
+        h = val / max_v * plot_h
+        svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, _bar_color(i), rx=2)
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h - h - 6, f"{val:.3f}", anchor="middle", size=10, color="#212529")
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h + 18, label, anchor="end", size=10, color="#495057", rotate=45)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    ticks = _nice_ticks(0, max_v)
+    for t in ticks:
+        ty = margin["top"] + plot_h - t / max_v * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    svg += _svg_end()
+    return svg
+
+
 def plot_transfer_matrix(ablations: list[dict[str, Any]], width: int = 700, height: int = 320) -> str:
     """Heatmap of skill-transfer gain (auto - no hint) per task."""
     if not ablations:

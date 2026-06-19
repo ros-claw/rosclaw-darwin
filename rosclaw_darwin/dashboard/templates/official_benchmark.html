@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Official Benchmark - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🏅 Official Benchmark</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Aggregate Summary</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  <table>
+    <tr>
+      <th>Metric</th>
+      <th>Value</th>
+    </tr>
+    <tr>
+      <td>Success Rate</td>
+      <td class="metric">{{ "%.2f"|format((data.success_rate or 0.0) * 100) }}%</td>
+    </tr>
+    <tr>
+      <td>Episodes</td>
+      <td class="metric">{{ data.num_episodes or data.total_episodes or 'n/a' }}</td>
+    </tr>
+    <tr>
+      <td>Mean Progress</td>
+      <td class="metric">{{ "%.4f"|format(data.progress_mean or 0.0) }}</td>
+    </tr>
+  </table>
+  {% if data.failure_distribution %}
+  <h3>Failure Distribution</h3>
+  <table>
+    <tr><th>Failure Type</th><th>Count</th></tr>
+    {% for ft, count in data.failure_distribution.items() %}
+    <tr><td><code>{{ ft }}</code></td><td class="metric">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <div style="margin-top:1rem;">
+    <img src="/official-benchmark/chart.svg" alt="Official benchmark chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No official benchmark data yet. Run the dex_cube goal_pose benchmark to populate.</p></div>
+{% endif %}
+{% endblock %}

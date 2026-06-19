@@ -159,7 +159,9 @@ class _ArenaComponentMapper:
     _ROBOT_MAP: dict[str, str] = {
         "franka": "franka_ik",
         "franka_ik": "franka_ik",
+        "franka_ik_abs": "franka_ik_abs",
         "franka_joint": "franka_joint",
+        "franka_joint_pos": "franka_joint_pos",
         "kuka_allegro": "kuka_allegro",
     }
 
@@ -269,11 +271,14 @@ class _ArenaComponentMapper:
         return scene, arena_task, embodiment
 
     def _create_embodiment(self):
-        """Create an Arena Embodiment from the robot field."""
+        """Create an Arena Embodiment from the robot field or metadata override."""
         from isaaclab_arena.embodiments.franka.franka import FrankaIKEmbodiment
         from isaaclab_arena.embodiments.kuka_allegro.kuka_allegro import KukaAllegroEmbodiment
 
-        robot = self._ROBOT_MAP.get(self.robot, "franka_ik")
+        # Allow task metadata to override the embodiment selection.
+        override = (self.task.metadata.get("arena_env_args") or {}).get("embodiment")
+        robot = override or self._ROBOT_MAP.get(self.robot, "franka_ik")
+
         if robot == "franka_ik":
             embodiment = FrankaIKEmbodiment()
             # Use IsaacLab lift-cube initial pose (elbow bent lower) instead of
@@ -293,15 +298,36 @@ class _ArenaComponentMapper:
             if hasattr(embodiment, "action_config") and hasattr(
                 embodiment.action_config, "arm_action"
             ):
-                if hasattr(embodiment.action_config.arm_action, "controller"):
-                    embodiment.action_config.arm_action.controller.use_relative_mode = False
-                # Scale=0.5 halves position targets and corrupts quaternions in
-                # absolute mode. Set to 1.0 so action = actual target pose.
-                if hasattr(embodiment.action_config.arm_action, "scale"):
-                    embodiment.action_config.arm_action.scale = 1.0
+                arm_action_cfg = embodiment.action_config.arm_action
+                print(f"[ARENA_ADAPTER] before replace: use_relative_mode={getattr(getattr(arm_action_cfg, 'controller', None), 'use_relative_mode', None)}, scale={getattr(arm_action_cfg, 'scale', None)}", flush=True)
+                if hasattr(arm_action_cfg, "controller"):
+                    new_controller = arm_action_cfg.controller.replace(
+                        use_relative_mode=False
+                    )
+                    arm_action_cfg = arm_action_cfg.replace(
+                        controller=new_controller,
+                        scale=1.0,
+                    )
+                    embodiment.action_config.arm_action = arm_action_cfg
+                print(f"[ARENA_ADAPTER] after replace: use_relative_mode={getattr(getattr(embodiment.action_config.arm_action, 'controller', None), 'use_relative_mode', None)}, scale={getattr(embodiment.action_config.arm_action, 'scale', None)}", flush=True)
+            return embodiment
+        if robot == "franka_joint_pos":
+            from isaaclab_arena.embodiments.franka.franka import FrankaJointPosEmbodiment
+
+            embodiment = FrankaJointPosEmbodiment()
+            # Use the same tabletop-friendly initial pose as the IK embodiment.
+            embodiment.set_initial_joint_pose(
+                [0.0, -0.569, 0.0, -2.81, 0.0, 3.037, 0.741, 0.04, 0.04]
+            )
+            # Disable joint randomization for deterministic calibration.
+            if hasattr(embodiment, "event_config") and hasattr(
+                embodiment.event_config, "randomize_franka_joint_state"
+            ):
+                embodiment.event_config.randomize_franka_joint_state.params["std"] = 0.0
             return embodiment
         if robot == "franka_joint":
             from isaaclab_arena.embodiments.franka.franka import FrankaJointEmbodiment
+
             return FrankaJointEmbodiment()
         if robot == "kuka_allegro":
             return KukaAllegroEmbodiment()
@@ -659,11 +685,14 @@ class ArenaAdapter(BaseEnvironmentAdapter):
 
     def _make_args(self) -> argparse.Namespace:
         """Create an argparse Namespace with the fields ArenaEnvBuilder expects."""
+        task_seed = getattr(getattr(self.task, "mutation", None), "seed", None)
+        seed = task_seed if task_seed is not None else 42
+        placement_seed = task_seed if task_seed is not None else None
         return argparse.Namespace(
             num_envs=self._num_envs,
             env_spacing=30.0,
             solve_relations=True,
-            placement_seed=None,
+            placement_seed=placement_seed,
             resolve_on_reset=None,
             mimic=False,
             device=self._device,
@@ -674,7 +703,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             experience="",
             kit_args="",
             distributed=False,
-            seed=42,
+            seed=seed,
             presets=None,
         )
 
@@ -874,6 +903,7 @@ class ArenaAdapter(BaseEnvironmentAdapter):
         policy_config: dict,
         episodes: int | None = None,
         max_steps: int | None = None,
+        trace_dir: Path | str | None = None,
     ) -> EvaluationResult:
         """Run a policy for multiple episodes via Arena."""
         import time
@@ -1022,6 +1052,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "heuristic_policy.GripperCalibrationPolicy"
             if policy_type == "rotational_calibration":
                 policy_type = "heuristic_policy.RotationalCalibrationPolicy"
+            if policy_type == "joint_space_calibration":
+                policy_type = "heuristic_policy.JointSpaceCalibrationPolicy"
             if policy_type == "replay_action":
                 policy_type = "isaaclab_arena.policy.replay_action_policy.ReplayActionPolicy"
             if policy_type == "torchscript":
@@ -1040,6 +1072,11 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 existing_hints = list(policy_config_dict.get("skill_hints", []))
                 top_hints = policy_config.get("skill_hints", [])
                 policy_config_dict["skill_hints"] = top_hints if top_hints else existing_hints
+                # Forward declared object geometry so the policy can adapt thresholds.
+                object_geometry = self.task.metadata.get("object_geometry")
+                if object_geometry and isinstance(object_geometry, dict):
+                    policy_config_dict["object_geometry"] = dict(object_geometry)
+                    policy_config_dict.setdefault("use_object_geometry_adaptation", True)
             # For heuristic policies use step-based rollout when no episode count
             # is given so we can observe behaviour across multiple steps even if
             # episodes end early. If episodes are explicitly requested, honour it.
@@ -1078,6 +1115,27 @@ class ArenaAdapter(BaseEnvironmentAdapter):
             if meta_env_args and isinstance(meta_env_args, dict):
                 job["arena_env_args"].update(meta_env_args)
 
+            # Forward seed / placement_seed so the container-side environment can
+            # reproduce or vary initial conditions consistently with the host.
+            task_seed = getattr(getattr(self.task, "mutation", None), "seed", None)
+            if task_seed is not None:
+                job["seed"] = int(task_seed)
+                job["placement_seed"] = int(task_seed)
+
+            # Forward physics_ablation so the container-side bootstrap can patch
+            # procedural object spawn configs (size / friction / mass) for object
+            # generalization experiments. Kept outside arena_env_args because the
+            # Arena CLI parser does not recognise it.
+            physics_ablation = self.task.metadata.get("physics_ablation")
+            if physics_ablation and isinstance(physics_ablation, dict):
+                job["physics_ablation"] = dict(physics_ablation)
+
+            # Forward asset_policy so the container can detect silent fallback
+            # and refuse to run official-benchmark tasks with a fallback asset.
+            asset_policy = self.task.metadata.get("asset_policy")
+            if asset_policy and isinstance(asset_policy, dict):
+                job["asset_policy"] = dict(asset_policy)
+
             # Merge native config from task provenance if available
             native_config = {}
             if self.task.provenance is not None and hasattr(self.task.provenance, "native_config"):
@@ -1098,6 +1156,8 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 job["num_steps"] = max_steps
 
             job["_out_dir"] = "/tmp/rosclaw_data/runs"
+            if trace_dir is not None:
+                job["_trace_dir"] = str(trace_dir)
 
             if getattr(self, "_dry_run", False) or policy_config.get("dry_run"):
                 return EvaluationResult(
@@ -1130,6 +1190,28 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                         if "progress" in k:
                             normalized["progress"] = float(v)
                 result.metrics.update(normalized)
+
+            # Apply asset-fidelity semantics from the container-side resolution.
+            arena_output = result.metadata.get("arena_metrics_output") or {}
+            asset_info = arena_output.get("asset_info")
+            benchmark_validity = arena_output.get("benchmark_validity")
+            if asset_info:
+                result.metadata["asset_info"] = asset_info
+            if benchmark_validity:
+                result.metadata["benchmark_validity"] = benchmark_validity
+            can_claim_official = bool(
+                benchmark_validity is not None
+                and benchmark_validity.get("can_claim_official_benchmark")
+            )
+            if not can_claim_official:
+                # Fallback/diagnostic results must not enter the official leaderboard.
+                result.leaderboard_excluded = True
+                if result.exclusion_reason is None:
+                    result.exclusion_reason = (
+                        asset_info.get("fallback_reason")
+                        if asset_info
+                        else "asset_not_official"
+                    )
 
             # Apply policy-metadata semantics (oracle/cheat exclusion, claim level).
             policy_metadata.apply_exclusion(result)

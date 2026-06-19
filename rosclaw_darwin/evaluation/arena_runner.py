@@ -151,6 +151,18 @@ class ArenaRunner:
             metrics_path = tmp_path / "metrics_output.json"
             metrics_path.write_text("{}")
 
+            # Per-run trace directory: prevents concurrent containers from racing on
+            # the shared episode_trace.jsonl file. The host directory is supplied by
+            # the caller (e.g. run_goal_pose_trace.py) and bind-mounted into the
+            # container at the location the policy/run_eval expect.
+            trace_dir = job.get("_trace_dir")
+            if trace_dir:
+                trace_path = Path(trace_dir)
+                trace_path.mkdir(parents=True, exist_ok=True)
+                trace_mount_src = str(trace_path)
+            else:
+                trace_mount_src = "/tmp/rosclaw_data/traces"
+
             # Build docker run command
             site_packages = "/isaac-sim/kit/python/lib/python3.12/site-packages"
             cmd = [
@@ -159,6 +171,15 @@ class ArenaRunner:
                 "-e", "DISPLAY=",
                 "-e", "OPENBLAS_NUM_THREADS=1",
                 "-e", "OMP_NUM_THREADS=1",
+                "-e", "ROSCLAW_TRACE_DIR=/workspace/data/traces",
+            ]
+            # Forward seed/placement_seed from the job into the container so the
+            # environment builder can vary initial conditions consistently.
+            if job.get("seed") is not None:
+                cmd.extend(["-e", f"ROSCLAW_ARENA_SEED={job['seed']}"])
+            if job.get("placement_seed") is not None:
+                cmd.extend(["-e", f"ROSCLAW_ARENA_PLACEMENT_SEED={job['placement_seed']}"])
+            cmd.extend([
                 "--entrypoint", "",
                 # Mount eval config
                 "-v", f"{config_path}:/workspace/data/eval_jobs.json",
@@ -186,6 +207,8 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'object_reference.py'}:/workspace/isaaclab_arena/assets/object_reference.py",
                 # Mount XformPrimView patch (standardizes Mesh/Scope prims from 6.0 assets).
                 "-v", f"{DEPS_DIR / 'xform_prim_view.py'}:/workspace/submodules/IsaacLab/source/isaaclab/isaaclab/sim/views/xform_prim_view.py",
+                # Mount absolute-pose IK embodiment patch (adds franka_ik_abs).
+                "-v", f"{DEPS_DIR / 'franka_ik_abs_patch.py'}:/workspace/isaaclab_arena/embodiments/franka/franka.py",
                 # Mount bootstrap
                 "-v", f"{DEPS_DIR / 'run_eval.py'}:/workspace/data/run_eval.py",
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
@@ -202,7 +225,7 @@ class ArenaRunner:
                 # Mount HDF5 recording directory (persist dataset recordings across container restarts)
                 "-v", "/tmp/rosclaw_data/hdf5:/tmp/isaaclab/logs",
                 # Mount episode trace directory so per-step traces survive container exit.
-                "-v", "/tmp/rosclaw_data/traces:/workspace/data/traces",
+                "-v", f"{trace_mount_src}:/workspace/data/traces",
                 # Mount test_data with official pretrained models (lift_object_model.pt)
                 "-v", "/code/rosclaw/rosclaw_darwin/reference_projects/IsaacLab-Arena/isaaclab_arena/tests/test_data:/workspace/isaaclab_arena/tests/test_data",
                 # Mount training logs/checkpoints so RSL-RL policies can load trained models
@@ -211,7 +234,7 @@ class ArenaRunner:
                 self.docker_image,
                 "/isaac-sim/python.sh", "/workspace/data/run_eval.py",
                 "--eval_jobs_config", "/workspace/data/eval_jobs.json",
-            ]
+            ])
 
             logger.info(f"Running Arena (docker): {' '.join(cmd[:12])} ...")
 

@@ -1,0 +1,58 @@
+policy_id: heuristic_servo_goal_pose_v3_reachability
+type: heuristic_servo_goal_pose
+strength: 0.7
+memory_bonus: 0.0
+skill_hints:
+  - stabilize_lift
+  - reduce_xy_motion
+  - longer_gripper_close
+  - verify_object_following
+policy_config_dict:
+  approach_offset_z: 0.10
+  grasp_offset_z: 0.00
+  lift_height: 0.3
+  align_height_offset: 0.3
+  lift_horizontal_scale: 0.0
+  lift_max_delta: 0.12
+  align_horizontal_scale: 0.2
+  align_kp_multiplier: 0.5
+  align_max_delta: 0.06
+  release_at_target: false
+  require_orientation_alignment: true
+  kp: 3.0
+  grasp_dist_threshold: 0.04
+  gripper_close_threshold: 0.012
+  min_grasp_steps: 30
+  grasp_squeeze_steps: 15
+  min_release_steps: 10
+  approach_horizontal_threshold: 0.05
+  max_state_steps: 3000
+  success_threshold: 0.06
+  orientation_threshold: 0.5
+  lift_kp_multiplier: 1.0
+  grasp_z_tolerance: 0.005
+  fixed_target_quat: [0.0, 0.0, 0.7071, 0.7071]
+
+  pre_grasp_orient: false
+  grasp_target_yaw_offset: 1.5708
+  pre_grasp_yaw_threshold: 0.2
+  reorient_before_align: true
+  reorient_height_offset: 0.3
+  max_lift_delta_z: 0.08
+  use_quaternion_orientation_target: false
+  yaw_step_size: 0.10
+  stabilize_steps_after_yaw: 10
+  skip_broken_yaw_control: false
+
+  verify_object_following_steps: 5
+  object_following_distance_threshold: 0.10
+
+  use_object_geometry_adaptation: true
+
+  # Reachability-aware approach planner (Sprint 1 v1.6).
+  reachability_strategy: side_pregrasp_positive_y
+  reachability_positive_y_threshold: 0.01
+  reachability_positive_yaw_threshold: 0.0
+  high_pregrasp_z_offset: 0.25
+  side_pregrasp_y_offset: -0.05
+  side_pregrasp_z_offset: 0.15

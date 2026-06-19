@@ -1,0 +1,40 @@
+id: goal_pose_procedural_cube_large
+name: Goal Pose Procedural Cube Large
+version: "1.0"
+description: goal_pose with a larger procedural_cube (8 cm cube) to test whether small object size is the blocker.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose]
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    embodiment: franka_ik_abs
+  physics_ablation:
+    size: [0.08, 0.08, 0.08]

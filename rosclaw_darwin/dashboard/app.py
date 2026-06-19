@@ -148,6 +148,80 @@ class DashboardApp:
                 "leaderboard": entries,
             })
 
+        @self.app.get("/official-benchmark", response_class=HTMLResponse)
+        async def official_benchmark_page(request: Request) -> Any:
+            data = self._load_official_benchmark()
+            return self.templates.TemplateResponse(request, "official_benchmark.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/official-benchmark/chart.svg", response_class=SVGResponse)
+        async def official_benchmark_chart() -> Any:
+            data = self._load_official_benchmark()
+            if data is None:
+                return SVGResponse(content=charts.plot_official_benchmark(0.0, {}), status_code=404)
+            return SVGResponse(
+                content=charts.plot_official_benchmark(
+                    data.get("success_rate", 0.0),
+                    data.get("failure_distribution", {}),
+                )
+            )
+
+        @self.app.get("/ood-adaptation", response_class=HTMLResponse)
+        async def ood_adaptation_page(request: Request) -> Any:
+            data = self._load_ood_adaptation()
+            return self.templates.TemplateResponse(request, "ood_adaptation.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/ood-adaptation/chart.svg", response_class=SVGResponse)
+        async def ood_adaptation_chart() -> Any:
+            data = self._load_ood_adaptation()
+            if data is None:
+                return SVGResponse(content=charts.plot_ood_adaption({}), status_code=404)
+            return SVGResponse(
+                content=charts.plot_ood_adaption(data.get("conditions", {}))
+            )
+
+        @self.app.get("/failure-boundary", response_class=HTMLResponse)
+        async def failure_boundary_page(request: Request) -> Any:
+            data = self._load_failure_boundary()
+            return self.templates.TemplateResponse(request, "failure_boundary.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/failure-boundary/chart.svg", response_class=SVGResponse)
+        async def failure_boundary_chart() -> Any:
+            data = self._load_failure_boundary()
+            if data is None:
+                return SVGResponse(content=charts.plot_failure_boundary(None), status_code=404)
+            return SVGResponse(
+                content=charts.plot_failure_boundary(
+                    fba_result=data.get("fba_result"),
+                    phase_scores=data.get("phase_scores"),
+                )
+            )
+
+        @self.app.get("/target-yaw-matrix", response_class=HTMLResponse)
+        async def target_yaw_matrix_page(request: Request) -> Any:
+            data = self._load_target_yaw_matrix()
+            return self.templates.TemplateResponse(request, "target_yaw_matrix.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/target-yaw-matrix/chart.svg", response_class=SVGResponse)
+        async def target_yaw_matrix_chart() -> Any:
+            data = self._load_target_yaw_matrix()
+            if data is None:
+                return SVGResponse(content=charts.plot_target_yaw_matrix({}), status_code=404)
+            return SVGResponse(
+                content=charts.plot_target_yaw_matrix(data.get("per_target_yaw", {}))
+            )
+
         @self.app.get("/memory", response_class=HTMLResponse)
         async def memory_page(request: Request) -> Any:
             return self.templates.TemplateResponse(request, "memory.html", {
@@ -530,6 +604,69 @@ class DashboardApp:
                 "with_run_id": with_auto.get("run_id"),
             })
         return ablations
+
+    def _load_official_benchmark(self) -> dict[str, Any] | None:
+        """Load the latest official dex_cube benchmark aggregate summaries."""
+        paths = [
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/arena_real/dex_cube_goal_pose_100_seed_v16/aggregate_summary.json"),
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/arena_real/dex_cube_goal_pose_reachability_regression/aggregate_summary.json"),
+        ]
+        for p in paths:
+            if p.exists():
+                try:
+                    data = json.loads(p.read_text())
+                    data["_source_path"] = str(p)
+                    return data
+                except Exception:
+                    continue
+        return None
+
+    def _load_ood_adaptation(self) -> dict[str, Any] | None:
+        """Load procedural OOD diagnostic aggregate."""
+        paths = [
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/diagnostics/procedural_contact_diagnosis/aggregate_summary.json"),
+            Path("/tmp/rosclaw_data/procedural_ood_adaptive_recovery/aggregate_summary.json"),
+        ]
+        for p in paths:
+            if p.exists():
+                try:
+                    data = json.loads(p.read_text())
+                    data["_source_path"] = str(p)
+                    return data
+                except Exception:
+                    continue
+        return None
+
+    def _load_failure_boundary(self) -> dict[str, Any] | None:
+        """Load contact-diagnosis / adaptive-recovery aggregate."""
+        p = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/diagnostics/procedural_contact_diagnosis/aggregate_summary.json")
+        if p.exists():
+            try:
+                data = json.loads(p.read_text())
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                pass
+        return None
+
+    def _load_target_yaw_matrix(self) -> dict[str, Any] | None:
+        """Load target-yaw generalization aggregate.
+
+        Prefer the v1.6 cross-yaw matrix output; fall back to the older
+        target_yaw_generalization run if the matrix has not completed yet.
+        """
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/ablations/cross_yaw_matrix_v16/aggregate_summary.json"),
+            Path("/tmp/rosclaw_data/target_yaw_generalization_v3_grasp_hold/aggregate_summary.json"),
+        ):
+            if p.exists():
+                try:
+                    data = json.loads(p.read_text())
+                    data["_source_path"] = str(p)
+                    return data
+                except Exception:
+                    pass
+        return None
 
     def run(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         import uvicorn

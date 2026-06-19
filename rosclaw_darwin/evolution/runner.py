@@ -148,6 +148,8 @@ class EvolutionRunner:
 
         auto_hints: list[dict[str, Any]] = []
         parameter_overrides: dict[str, Any] = {}
+        structural_overrides: dict[str, Any] = {}
+        strategy_switches: list[str] = []
         matched_recipes: list[str] = []
         if auto_skill_hints:
             engine = FailureToHintEngine.from_yaml(hint_rules_path)
@@ -172,9 +174,13 @@ class EvolutionRunner:
 
             if signature_hints:
                 auto_hints = engine.to_dict(signature_hints)
-                # Merge parameter overrides from matched recipes.
+                # Merge parameter and structural overrides from matched recipes.
                 for hint in signature_hints:
                     parameter_overrides.update(hint.parameter_overrides)
+                    structural_overrides.update(hint.structural_overrides)
+                    for switch in hint.strategy_switches:
+                        if switch not in strategy_switches:
+                            strategy_switches.append(switch)
                 matched_recipes = list(
                     dict.fromkeys(h.source_recipe for h in signature_hints if h.source_recipe)
                 )
@@ -186,18 +192,26 @@ class EvolutionRunner:
                 existing_hints = set(policy2.get("skill_hints", []))
                 new_hint_names = [h["name"] for h in auto_hints if h["name"] not in existing_hints]
                 policy2["skill_hints"] = list(existing_hints) + new_hint_names
-                if parameter_overrides:
+                if parameter_overrides or structural_overrides:
                     policy2.setdefault("policy_config_dict", {})
                     policy2["policy_config_dict"] = {
                         **policy2["policy_config_dict"],
                         **parameter_overrides,
+                        **structural_overrides,
                     }
+                if strategy_switches:
+                    policy2.setdefault("policy_config_dict", {})
+                    existing_switches = set(policy2["policy_config_dict"].get("strategy_switches", []))
+                    existing_switches.update(strategy_switches)
+                    policy2["policy_config_dict"]["strategy_switches"] = sorted(existing_switches)
                 policy2["_hint_source"] = {
                     "auto": auto_hints,
                     "manual": [h for h in policy2.get("skill_hints", []) if h in manual_or_validated_hints],
                     "loop": 1,
                     "matched_recipes": matched_recipes,
                     "parameter_overrides": parameter_overrides,
+                    "structural_overrides": structural_overrides,
+                    "strategy_switches": strategy_switches,
                 }
 
         skill_hints_log["loop_2"] = [

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Target Yaw Matrix - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧭 Target Yaw Matrix</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Target-Yaw Generalization Aggregate</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  {% if data.per_target_yaw %}
+  <table>
+    <tr>
+      <th>Target Yaw</th>
+      <th>Lifted Rate</th>
+      <th>Orientation Achieved</th>
+      <th>Env Success Rate</th>
+      <th>Episodes</th>
+    </tr>
+    {% for yaw, metrics in data.per_target_yaw.items() %}
+    <tr>
+      <td><code>{{ yaw }}</code></td>
+      <td class="metric">{{ "%.2f"|format((metrics.lifted_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((metrics.orientation_achieved_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((metrics.env_success_rate or 0.0) * 100) }}%</td>
+      <td>{{ metrics.num_episodes or metrics.episodes or 'n/a' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <div style="margin-top:1rem;">
+    <img src="/target-yaw-matrix/chart.svg" alt="Target yaw matrix chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No target yaw matrix data yet. Run target-yaw generalization experiments to populate.</p></div>
+{% endif %}
+{% endblock %}

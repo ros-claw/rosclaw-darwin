@@ -1,5 +1,14 @@
 # Rotational Action Calibration Report
 
+> **Correction (2026-06-16):** The zero-rotation conclusion in the original
+> version of this report was caused by a sensor-reading bug.  The policy was
+> reading `source_quat_w` (robot-base orientation) instead of `quat_w`
+> (end-effector orientation) from the `FrameTransformer`.  After fixing the
+> reading order, `franka_ik` relative mode produces end-effector rotation, but
+> the axis-to-world-RPY mapping is cross-coupled.  See
+> [Franka IK Orientation Investigation Report](FRANKA_IK_ORIENTATION_INVESTIGATION_REPORT.md)
+> for the corrected analysis.
+
 ## 1. Purpose
 
 The goal_pose policy assumed that `action[..., 5]` controls end-effector yaw in

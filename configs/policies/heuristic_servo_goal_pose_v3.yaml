@@ -7,21 +7,21 @@ skill_hints:
   - reduce_xy_motion
   - longer_gripper_close
   - verify_object_following
-  - skip_broken_yaw
 policy_config_dict:
   approach_offset_z: 0.10
   grasp_offset_z: 0.00
-  lift_height: 0.0
-  align_height_offset: 0.0
+  lift_height: 0.3
+  align_height_offset: 0.3
   lift_horizontal_scale: 0.0
   lift_max_delta: 0.12
   align_horizontal_scale: 0.2
   align_kp_multiplier: 0.5
   align_max_delta: 0.06
   release_at_target: false
-  # Controller yaw authority is broken in franka_ik relative mode.
-  # Do not require or attempt orientation alignment.
-  require_orientation_alignment: false
+  # Absolute-mode orientation alignment is required for the official goal_pose
+  # success criterion (pose_reached). The franka_ik_abs embodiment provides an
+  # 8-D absolute pose action space where absolute quaternion targets work.
+  require_orientation_alignment: true
   kp: 3.0
   grasp_dist_threshold: 0.04
   gripper_close_threshold: 0.012
@@ -29,26 +29,49 @@ policy_config_dict:
   grasp_squeeze_steps: 15
   min_release_steps: 10
   approach_horizontal_threshold: 0.05
-  max_state_steps: 400
+  max_state_steps: 3000
   success_threshold: 0.06
   orientation_threshold: 0.5
   lift_kp_multiplier: 1.0
   grasp_z_tolerance: 0.005
-  fixed_target_pos: [0.1, 0.0, 0.3]
+  # Target orientation only; position is derived from the live object pose so the
+  # policy reorients the cube in place rather than dragging it across the table.
   fixed_target_quat: [0.0, 0.0, 0.7071, 0.7071]
 
-  # Keep a short pause above the object, but do not rely on yaw control.
-  pre_grasp_orient: true
-  grasp_target_yaw_offset: 0.0
+  # Absolute-quaternion orientation control via franka_ik_abs.
+  # The controller is in absolute pose mode (use_relative_mode=False, scale=1.0),
+  # so orientation targets are written as absolute quaternions into action[..., 3:7].
+  pre_grasp_orient: false
+  grasp_target_yaw_offset: 1.5708
   pre_grasp_yaw_threshold: 0.2
-  reorient_before_align: false
-  reorient_height_offset: 0.05
+  reorient_before_align: true
+  reorient_height_offset: 0.3
   max_lift_delta_z: 0.08
+  # use_quaternion_orientation_target is for relative-mode controllers that
+  # interpret action[..., 3:7] as a delta quaternion. franka_ik_abs is already
+  # absolute, so this stays false.
+  use_quaternion_orientation_target: false
+  yaw_step_size: 0.10
+  stabilize_steps_after_yaw: 10
+  skip_broken_yaw_control: false
 
-  # v3 intervention controls.
+  # v3 intervention: verify that the object is moving with the gripper before
+  # continuing to reorientation/alignment. This catches slips early instead of
+  # waiting for a later drop.
   verify_object_following_steps: 5
   object_following_distance_threshold: 0.10
-  use_quaternion_orientation_target: false
-  yaw_step_size: 0.20
-  stabilize_steps_after_yaw: 0
-  skip_broken_yaw_control: true
+
+  # Object-geometry adaptation (Sprint 4): scale grasp tolerances, approach
+  # offset, and lift height to the loaded object so fallback/different objects
+  # do not use dex_cube thresholds.
+  use_object_geometry_adaptation: true
+
+  # Reachability-aware approach planner (Sprint 1 v1.6).
+  # Promoted to default after 17-seed cluster fix (0/17 -> 17/17) and
+  # 50-seed regression validation (49/50 success, 0 approach_collision).
+  reachability_strategy: side_pregrasp_positive_y
+  reachability_positive_y_threshold: 0.01
+  reachability_positive_yaw_threshold: 0.0
+  high_pregrasp_z_offset: 0.25
+  side_pregrasp_y_offset: -0.05
+  side_pregrasp_z_offset: 0.15

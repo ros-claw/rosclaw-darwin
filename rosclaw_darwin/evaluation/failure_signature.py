@@ -70,6 +70,11 @@ class FailureSignature(BaseModel):
     blocked_gripper_abnormal: bool | None = None
     gripper_pos_min: float | None = None
 
+    # anomaly / data quality
+    physics_anomaly: bool = False
+    metric_parser_error: bool = False
+    anomaly_tags: list[str] = Field(default_factory=list)
+
     # action / controller
     nonzero_action_rate: float | None = None
     mean_action_norm: float | None = None

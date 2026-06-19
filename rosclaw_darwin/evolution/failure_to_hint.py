@@ -20,6 +20,8 @@ class SkillHint(BaseModel):
     confidence: float
     rationale: str | None = None
     parameter_overrides: dict[str, Any] = {}
+    structural_overrides: dict[str, Any] = {}
+    strategy_switches: list[str] = []
 
 
 class FailureToHintRule(BaseModel):
@@ -121,7 +123,9 @@ class FailureToHintEngine:
             return self.suggest(failure_types)
 
         registry = recipe_registry or HintRecipeRegistry.from_yaml()
-        selected, overrides, matched = registry.select_hints(tags, task_id=task_id)
+        selected, overrides, matched, structural_overrides, strategy_switches = registry.select_hints(
+            tags, task_id=task_id
+        )
 
         hints: list[SkillHint] = []
         seen: set[str] = set()
@@ -138,6 +142,8 @@ class FailureToHintEngine:
                         confidence=recipe.confidence,
                         rationale=recipe.rationale,
                         parameter_overrides=dict(overrides),
+                        structural_overrides=dict(structural_overrides),
+                        strategy_switches=list(strategy_switches),
                     )
                 )
         return hints

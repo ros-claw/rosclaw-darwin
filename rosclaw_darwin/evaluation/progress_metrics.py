@@ -60,6 +60,127 @@ def compute_lift_progress(
     return 0.5 * approach_progress + 0.3 * lift_progress + 0.2 * target_progress
 
 
+def _is_nan(value: Any) -> bool:
+    try:
+        return isinstance(value, float) and math.isnan(value)
+    except TypeError:
+        return False
+
+
+def detect_metric_anomaly(metrics: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Return (is_anomaly, tags) for impossible metric values."""
+    tags: list[str] = []
+    height_delta = metrics.get("object_height_delta")
+    if isinstance(height_delta, (int, float)) and abs(float(height_delta)) > 5.0:
+        tags.append("object_height_delta_anomaly")
+    obj_z = metrics.get("object_height_final") or metrics.get("object_height_max")
+    if isinstance(obj_z, (int, float)):
+        if float(obj_z) < -1.0 or float(obj_z) > 3.0:
+            tags.append("object_z_anomaly")
+    for key, value in metrics.items():
+        if _is_nan(value):
+            tags.append(f"nan:{key}")
+    return bool(tags), tags
+
+
+def classify_failure_class(
+    episode_metrics: dict[str, Any],
+    trace: list[dict[str, Any]] | None = None,
+    workspace_y_threshold: float = 0.05,
+    large_yaw_threshold: float = 1.2,
+    orientation_threshold: float = 0.5,
+) -> str:
+    """Map a single episode to one of the v1.6 failure classes.
+
+    The taxonomy is designed to separate workspace/reachability failures,
+    grasp failures, in-hand slip, orientation failures, and data anomalies.
+    """
+    is_anomaly, anomaly_tags = detect_metric_anomaly(episode_metrics)
+    if is_anomaly:
+        if any("nan:" in tag for tag in anomaly_tags):
+            return "metric_parser_error"
+        return "physics_anomaly"
+
+    success = bool(episode_metrics.get("success", False))
+    if success:
+        return "success"
+
+    failure_type = episode_metrics.get("failure_type", "unknown_failure")
+    phases_reached = set(episode_metrics.get("phases_reached", []))
+    lifted = bool(episode_metrics.get("lift_phase_reached")) or (
+        episode_metrics.get("object_height_delta", 0.0) > 0.03
+    )
+    reached = bool(
+        episode_metrics.get("grasp_phase_reached")
+        or episode_metrics.get("eef_to_object_distance_min", float("inf")) < 0.05
+    )
+
+    # Reachability / approach collision: never reached GRASP and object on +y edge.
+    if not reached or "GRASP" not in phases_reached:
+        initial_object_y: float | None = None
+        if trace:
+            initial_object_y = trace[0].get("object_y")
+        if initial_object_y is None:
+            initial_object_y = episode_metrics.get("object_y_initial")
+        if isinstance(initial_object_y, (int, float)) and float(initial_object_y) > workspace_y_threshold:
+            return "workspace_unreachable"
+        if failure_type == "target_not_reached":
+            return "approach_collision"
+        return "approach_collision"
+
+    # Grasp attempted but object not lifted.
+    if "GRASP" in phases_reached and not lifted:
+        return "grasp_failed" if failure_type == "object_not_lifted" else "object_not_lifted"
+
+    # Lifted but dropped before success.
+    if lifted and failure_type == "target_not_reached_after_lift":
+        target_yaw: float | None = None
+        object_yaw_error_final: float | None = None
+        if trace:
+            target_yaw = trace[-1].get("target_yaw")
+            object_yaw_error_final = trace[-1].get("object_yaw_error")
+        if target_yaw is None:
+            target_yaw = episode_metrics.get("target_yaw")
+        if object_yaw_error_final is None:
+            object_yaw_error_final = episode_metrics.get("orientation_error_final")
+        if isinstance(target_yaw, (int, float)) and abs(float(target_yaw)) >= large_yaw_threshold:
+            if isinstance(object_yaw_error_final, (int, float)) and float(object_yaw_error_final) > orientation_threshold:
+                return "large_yaw_slip"
+        if isinstance(object_yaw_error_final, (int, float)) and float(object_yaw_error_final) > orientation_threshold:
+            return "orientation_not_achieved"
+        return "hold_instability"
+
+    return "unknown"
+
+
+def compute_failure_boundary_advancement(
+    baseline_max_phase_scores: list[int],
+    condition_max_phase_scores: list[int],
+) -> dict[str, Any]:
+    """Compute Failure Boundary Advancement (FBA) between two conditions."""
+    phase_scores = {
+        "APPROACH": 1,
+        "DESCEND": 2,
+        "GRASP": 3,
+        "LIFT": 4,
+        "ALIGN": 5,
+        "HOLD": 6,
+        "SUCCESS": 7,
+    }
+
+    def _mean(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    baseline_mean = _mean([float(s) for s in baseline_max_phase_scores])
+    condition_mean = _mean([float(s) for s in condition_max_phase_scores])
+    return {
+        "baseline_mean_phase_score": round(baseline_mean, 4),
+        "condition_mean_phase_score": round(condition_mean, 4),
+        "fba": round(condition_mean - baseline_mean, 4),
+        "phase_score_mapping": phase_scores,
+    }
+
+
 def infer_failure_type(
     reached_object: bool,
     lifted: bool,

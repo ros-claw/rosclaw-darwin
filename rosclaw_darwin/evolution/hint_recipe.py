@@ -23,6 +23,8 @@ class HintRecipe(BaseModel):
     trigger_tags: list[str]
     hints: list[str]
     parameter_overrides: dict[str, Any] = {}
+    structural_overrides: dict[str, Any] = {}
+    strategy_switches: list[str] = []
     confidence: float = 0.0
     rationale: str | None = None
     expected_effect: str | None = None
@@ -122,6 +124,8 @@ class HintRecipeRegistry:
         selected_hints: list[str] = []
         selected_set: set[str] = set()
         overrides: dict[str, Any] = {}
+        structural_overrides: dict[str, Any] = {}
+        strategy_switches: list[str] = []
         matched: list[HintRecipe] = []
 
         for recipe in recipes:
@@ -135,9 +139,13 @@ class HintRecipeRegistry:
                 selected_set.add(hint)
                 selected_hints.append(hint)
             overrides.update(recipe.parameter_overrides)
+            structural_overrides.update(recipe.structural_overrides)
+            for switch in recipe.strategy_switches:
+                if switch not in strategy_switches:
+                    strategy_switches.append(switch)
             matched.append(recipe)
 
-        return selected_hints, overrides, matched
+        return selected_hints, overrides, matched, structural_overrides, strategy_switches
 
 
 def _sort_by_precedence(recipes: list[HintRecipe]) -> list[HintRecipe]:

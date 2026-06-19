@@ -1,0 +1,127 @@
+version: 0.3.0
+
+# Structural FailureToHint v3.1 rules.
+#
+# In addition to parameter overrides, these recipes can flip structural strategy
+# switches (e.g. enable_regrasp) and provide structural_overrides that are merged
+# directly into the policy config.  They are intended for object-aware adaptive
+# recovery on OOD assets where simple threshold tuning is insufficient.
+
+rules:
+  - name: weak_contact_no_lift_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - weak_contact_no_lift
+      - grasped_but_not_lifted
+      - object_not_lifted
+    hints:
+      - enable_regrasp
+      - contact_verify
+      - lift_verify
+    parameter_overrides:
+      min_grasp_steps: 35
+      grasp_squeeze_steps: 20
+    structural_overrides:
+      enable_regrasp: true
+      max_regrasp_attempts: 2
+      verify_lift_response_steps: 10
+      min_lift_response_z: 0.01
+    strategy_switches:
+      - contact_verify
+      - lift_verify
+    confidence: 0.7
+    rationale: "Gripper contacts the object but the object does not move during lift; try small lateral regrasps."
+    expected_effect: "Convert weak contact into a successful lift via regrasp offsets."
+
+  - name: no_contact_after_grasp_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - no_contact
+      - reached_but_not_grasped
+    hints:
+      - enable_regrasp
+      - lower_grasp_height
+      - longer_squeeze
+    parameter_overrides:
+      grasp_offset_z: 0.035
+      min_grasp_steps: 35
+    structural_overrides:
+      enable_regrasp: true
+      max_regrasp_attempts: 2
+      verify_lift_response_steps: 10
+      min_lift_response_z: 0.01
+    strategy_switches:
+      - contact_verify
+      - lift_verify
+    confidence: 0.65
+    rationale: "Gripper closes without engaging the object; lower the grasp target and verify contact before lifting."
+    expected_effect: "Establish physical contact before committing to lift."
+
+  - name: object_pushed_away_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - pushed_away
+    hints:
+      - enable_regrasp
+      - slower_descent
+      - reduce_xy_motion
+    parameter_overrides:
+      kp: 2.0
+      min_grasp_steps: 35
+    structural_overrides:
+      enable_regrasp: true
+      max_regrasp_attempts: 2
+      regrasp_xy_offsets:
+        - [0.005, 0.0]
+        - [-0.005, 0.0]
+      verify_lift_response_steps: 10
+      min_lift_response_z: 0.01
+    strategy_switches:
+      - contact_verify
+      - lift_verify
+    confidence: 0.6
+    rationale: "The close phase pushes the object out of the grasp; reduce approach speed and retry with lateral offsets."
+    expected_effect: "Stop pushing the object away during grasp closure."
+
+  - name: unstable_grasp_structural_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - unstable_grasp
+      - lifted_then_dropped
+    hints:
+      - longer_squeeze
+      - maintain_grip_force
+      - stabilize_lift
+      - reduce_xy_motion
+    parameter_overrides:
+      grasp_squeeze_steps: 25
+      max_lift_delta_z: 0.05
+    structural_overrides:
+      enable_regrasp: false
+    strategy_switches: []
+    confidence: 0.65
+    rationale: "Object is lifted but slips later; keep it structural-only parameter tuning, no regrasp needed."
+    expected_effect: "Reduce slip-induced drops without adding regrasp complexity."
+
+  - name: precision_alignment_structural_recipe
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - lifted_but_not_aligned
+      - final_alignment_gap
+    hints:
+      - precision_target_tracking
+      - slow_final_align
+      - hold_at_target
+    parameter_overrides:
+      align_kp: 0.6
+      align_max_delta: 0.04
+    structural_overrides: {}
+    strategy_switches: []
+    confidence: 0.7
+    rationale: "Object is lifted but final pose residual prevents success."
+    expected_effect: "Reduce final target residual after lift."

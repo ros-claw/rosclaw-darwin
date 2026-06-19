@@ -1,0 +1,44 @@
+id: goal_pose_procedural_cube_adaptive
+name: Goal Pose Procedural Cube Adaptive Diagnostic
+version: "1.0"
+description: Diagnostic variant using the procedural_cube fallback with object-aware adaptive policy. Results are explicitly not official benchmark results.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik_abs
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose, diagnostic, ood, adaptive]
+metadata:
+  difficulty: 1.0
+  official_arena_asset: false
+  diagnostic_variant: true
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    embodiment: franka_ik_abs
+  asset_policy:
+    require_official_asset: false
+    allow_procedural_fallback: true
+    diagnostic_variant: true

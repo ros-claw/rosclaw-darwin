@@ -1,0 +1,56 @@
+id: goal_pose_procedural_cube_large_ood
+name: Goal Pose Large Procedural Cube OOD Diagnostic
+version: "1.0"
+description: Diagnostic variant of cube_goal_pose using a large procedural_cube (0.10 m) to validate ObjectGeometryAdapter scaling.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose, diagnostic, ood, geometry]
+metadata:
+  difficulty: 1.0
+  official_arena_asset: false
+  diagnostic_variant: true
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    embodiment: franka_ik_abs
+  asset_policy:
+    require_official_asset: false
+    allow_procedural_fallback: true
+    diagnostic_variant: true
+  # Declared geometry lets the policy adapt thresholds even if scene extraction
+  # fails. The adapter will still prefer scene-extracted size when available.
+  object_geometry:
+    object_name: procedural_cube
+    asset_source: task_metadata
+    width: 0.10
+    depth: 0.10
+    height: 0.10
+  physics_ablation:
+    size: [0.10, 0.10, 0.10]
+    static_friction: 1.0
+    dynamic_friction: 1.0

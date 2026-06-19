@@ -1,0 +1,46 @@
+id: goal_pose_procedural_cube_dex_collision
+name: Goal Pose Procedural Cube Dex Collision
+version: "1.0"
+description: goal_pose with a procedural_cube whose collision/contact properties are tuned to match the USD dex_cube asset (contact_offset, rest_offset, torsional patch radius, mass).
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose]
+metadata:
+  difficulty: 1.0
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    embodiment: franka_ik_abs
+  physics_ablation:
+    size: [0.048, 0.048, 0.048]
+    contact_offset: 0.001
+    rest_offset: 0.0
+    torsional_patch_radius: 0.1
+    min_torsional_patch_radius: 0.008
+    mass: 0.216
+    solver_velocity_iteration_count: 1

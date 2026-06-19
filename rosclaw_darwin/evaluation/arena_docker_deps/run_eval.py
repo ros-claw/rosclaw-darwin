@@ -8,10 +8,359 @@ import lightwheel_patch  # noqa: F401
 
 import json
 import math
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
+
+
+# ---------------------------------------------------------------------------
+# Seed forwarding from the host job into the container environment.
+# ---------------------------------------------------------------------------
+_ROSCLAW_ARENA_SEED = os.environ.get("ROSCLAW_ARENA_SEED")
+_ROSCLAW_ARENA_PLACEMENT_SEED = os.environ.get("ROSCLAW_ARENA_PLACEMENT_SEED")
+
+
+def _parse_seed(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+_ARENA_SEED = _parse_seed(_ROSCLAW_ARENA_SEED)
+_ARENA_PLACEMENT_SEED = _parse_seed(_ROSCLAW_ARENA_PLACEMENT_SEED)
+if _ARENA_SEED is not None:
+    os.environ.setdefault("ISAACLAB_SEED", str(_ARENA_SEED))
+
+# Inject --seed/--placement_seed into sys.argv so Arena's top-level CLI parser
+# sees them *before* the environment subcommand.  This must happen before any
+# module parses sys.argv.
+if _ARENA_SEED is not None and "--seed" not in sys.argv:
+    sys.argv.insert(2, "--seed")
+    sys.argv.insert(3, str(_ARENA_SEED))
+if _ARENA_PLACEMENT_SEED is not None and "--placement_seed" not in sys.argv:
+    sys.argv.insert(2, "--placement_seed")
+    sys.argv.insert(3, str(_ARENA_PLACEMENT_SEED))
+
+
+# ---------------------------------------------------------------------------
+# Asset-resolution helpers (inlined so the container does not depend on the
+# host-only rosclaw_darwin package).
+# ---------------------------------------------------------------------------
+@dataclass
+class _AssetResolution:
+    requested_object: str
+    loaded_object: str
+    asset_source: str
+    asset_path: str | None = None
+    asset_fallback_used: bool = False
+    fallback_reason: str | None = None
+    official_asset: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requested_object": self.requested_object,
+            "loaded_object": self.loaded_object,
+            "asset_source": self.asset_source,
+            "asset_path": self.asset_path,
+            "asset_fallback_used": self.asset_fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "official_asset": self.official_asset,
+        }
+
+
+@dataclass
+class _AssetPolicy:
+    require_official_asset: bool = False
+    allow_procedural_fallback: bool = True
+    diagnostic_variant: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "_AssetPolicy":
+        if data is None:
+            return cls()
+        return cls(
+            require_official_asset=bool(data.get("require_official_asset", False)),
+            allow_procedural_fallback=bool(data.get("allow_procedural_fallback", True)),
+            diagnostic_variant=bool(data.get("diagnostic_variant", False)),
+        )
+
+
+@dataclass
+class _BenchmarkValidity:
+    can_claim_official_benchmark: bool = False
+    validity_scope: str = "unknown"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "can_claim_official_benchmark": self.can_claim_official_benchmark,
+            "validity_scope": self.validity_scope,
+        }
+
+
+def _load_asset_policy(job_config: dict[str, Any]) -> _AssetPolicy:
+    policy_dict = job_config.get("asset_policy")
+    if policy_dict is None:
+        metadata = job_config.get("metadata") or {}
+        policy_dict = metadata.get("asset_policy")
+    return _AssetPolicy.from_dict(policy_dict)
+
+
+def _load_requested_object(job_config: dict[str, Any]) -> str:
+    arena_env_args = job_config.get("arena_env_args") or {}
+    obj = arena_env_args.get("object")
+    if obj:
+        return str(obj)
+    metadata = job_config.get("metadata") or {}
+    objects = metadata.get("objects") or []
+    if objects:
+        return str(objects[0].get("name", "unknown"))
+    return "unknown"
+
+
+def _resolve_asset_from_scene(requested_object: str, scene: Any) -> _AssetResolution:
+    _EXPECTED_PRIM_NAMES: dict[str, set[str]] = {
+        "dex_cube": {"dex_cube", "cube", "object"},
+        "cube": {"dex_cube", "cube", "object"},
+        "procedural_cube": {"procedural_cube", "cube", "object"},
+    }
+    expected_names = _EXPECTED_PRIM_NAMES.get(requested_object, {requested_object})
+
+    loaded_object = "unknown"
+    asset_path: str | None = None
+    fallback_used = False
+    fallback_reason: str | None = None
+    official_asset = False
+    object_class: str | None = None
+
+    try:
+        scene_keys = list(scene.keys())
+    except Exception:
+        scene_keys = []
+
+    # Find the first plausible manipulation target among scene keys.
+    candidate_keys = [k for k in scene_keys if str(k) in expected_names]
+    if not candidate_keys:
+        # Fallback: any key that is not a known non-object.
+        non_object_keys = {"robot", "ee_frame", "background", "light", "table", "floor"}
+        candidate_keys = [k for k in scene_keys if str(k) not in non_object_keys]
+
+    if candidate_keys:
+        loaded_key = str(candidate_keys[0])
+        loaded_object = loaded_key
+        try:
+            obj = scene.get(loaded_key) if hasattr(scene, "get") else None
+            if obj is not None:
+                asset_path = getattr(obj, "usd_path", None)
+                if asset_path:
+                    asset_path = str(asset_path)
+                object_class = type(obj).__name__
+        except Exception:
+            pass
+
+    # Determine source and fallback status using class/path heuristics.
+    is_dex_cube = (
+        loaded_object in ("dex_cube",)
+        or (object_class is not None and "DexCube" in object_class)
+        or (asset_path is not None and "DexCube" in asset_path)
+    )
+    is_procedural = (
+        loaded_object == "procedural_cube"
+        or (object_class is not None and "Procedural" in object_class)
+        or (asset_path is not None and asset_path == "")
+        or (asset_path is None and object_class in ("NoneType",))
+    )
+
+    if requested_object in ("dex_cube", "cube"):
+        if is_dex_cube:
+            asset_source = "usd_asset"
+            official_asset = True
+            fallback_used = False
+            loaded_object = "dex_cube"
+        elif is_procedural:
+            asset_source = "procedural_fallback"
+            fallback_used = True
+            fallback_reason = "dex_cube_asset_missing"
+            official_asset = False
+            loaded_object = "procedural_cube"
+        else:
+            asset_source = "unknown"
+            fallback_used = True
+            fallback_reason = f"loaded_{loaded_object}_instead_of_dex_cube"
+            official_asset = False
+    elif requested_object == "procedural_cube":
+        if is_procedural or is_dex_cube:
+            # Even if the environment silently upgraded to dex_cube, the task
+            # asked for procedural; treat as fallback/diagnostic.
+            asset_source = "procedural_fallback" if is_procedural else "usd_asset"
+            fallback_used = not is_procedural
+            if fallback_used:
+                fallback_reason = "procedural_cube_not_used"
+            official_asset = False
+            loaded_object = "procedural_cube" if is_procedural else "dex_cube"
+        else:
+            asset_source = "unknown"
+            fallback_used = True
+            fallback_reason = f"loaded_{loaded_object}_instead_of_procedural_cube"
+            official_asset = False
+    else:
+        asset_source = "registered_asset" if not is_procedural else "procedural_fallback"
+        official_asset = not is_procedural and loaded_object == requested_object
+        fallback_used = not official_asset
+        if fallback_used:
+            fallback_reason = f"loaded_{loaded_object}_instead_of_{requested_object}"
+
+    return _AssetResolution(
+        requested_object=requested_object,
+        loaded_object=loaded_object,
+        asset_source=asset_source,
+        asset_path=asset_path,
+        asset_fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        official_asset=official_asset,
+    )
+
+
+def _compute_benchmark_validity(
+    resolution: _AssetResolution, asset_policy: _AssetPolicy
+) -> tuple[_BenchmarkValidity, bool]:
+    if resolution.official_asset and not asset_policy.diagnostic_variant:
+        return _BenchmarkValidity(can_claim_official_benchmark=True, validity_scope="official_arena_asset"), False
+    if resolution.asset_fallback_used:
+        if asset_policy.require_official_asset and not asset_policy.allow_procedural_fallback:
+            return _BenchmarkValidity(can_claim_official_benchmark=False, validity_scope="environment_invalid"), True
+        return _BenchmarkValidity(can_claim_official_benchmark=False, validity_scope="asset_fidelity_diagnostic"), False
+    if asset_policy.diagnostic_variant:
+        return _BenchmarkValidity(can_claim_official_benchmark=False, validity_scope="ood_diagnostic"), False
+    return _BenchmarkValidity(can_claim_official_benchmark=False, validity_scope="unknown"), False
+
+
+def _as_tuple(value: Any) -> tuple[float, ...]:
+    """Normalise a scalar/list/tensor to a tuple of floats."""
+    if isinstance(value, (list, tuple)):
+        return tuple(float(v) for v in value)
+    try:
+        import torch
+
+        if isinstance(value, torch.Tensor):
+            return tuple(float(v) for v in value.flatten().tolist())
+    except Exception:
+        pass
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            return tuple(float(v) for v in value.flatten().tolist())
+    except Exception:
+        pass
+    return (float(value),)
+
+
+def _extract_geometry_from_scene(scene: Any, object_name: str = "unknown") -> dict[str, Any]:
+    """Extract object geometry from an IsaacLab/Arena scene object.
+
+    Inlined container-side version that does not depend on the host package.
+    """
+    geometry: dict[str, Any] = {
+        "width": 0.05,
+        "depth": 0.05,
+        "height": 0.05,
+        "object_name": object_name,
+        "asset_source": "scene",
+        "mass": None,
+        "static_friction": None,
+    }
+    try:
+        obj = None
+        for key in scene.keys():
+            if str(key) == object_name or str(key) in {"dex_cube", "object", "cube", "procedural_cube"}:
+                candidate = scene[key]
+                cand_name = getattr(candidate, "name", str(key))
+                if cand_name == object_name or object_name == "unknown":
+                    obj = candidate
+                    geometry["object_name"] = str(key)
+                    break
+
+        if obj is None:
+            return geometry
+
+        spawn = getattr(obj, "spawn", None)
+        if spawn is not None:
+            size = getattr(spawn, "size", None)
+            if size is not None:
+                s = _as_tuple(size)
+                if len(s) >= 3:
+                    geometry["width"] = float(s[0])
+                    geometry["depth"] = float(s[1])
+                    geometry["height"] = float(s[2])
+                    return geometry
+            scale = getattr(spawn, "scale", None)
+            if scale is not None:
+                sc = _as_tuple(scale)
+                geometry["width"] *= float(sc[0]) if len(sc) > 0 else 1.0
+                geometry["depth"] *= float(sc[1]) if len(sc) > 1 else 1.0
+                geometry["height"] *= float(sc[2]) if len(sc) > 2 else 1.0
+            # Read physical properties from the spawn config if available.
+            try:
+                mass_props = getattr(spawn, "mass_props", None)
+                if mass_props is not None:
+                    mass = getattr(mass_props, "mass", None)
+                    if mass is not None:
+                        geometry["mass"] = float(mass)
+                physics_material = getattr(spawn, "physics_material", None)
+                if physics_material is not None:
+                    static_friction = getattr(physics_material, "static_friction", None)
+                    if static_friction is not None:
+                        geometry["static_friction"] = float(static_friction)
+            except Exception:
+                pass
+
+        # Fallback: read from the live object data if spawn config did not have it.
+        try:
+            if geometry["mass"] is None and hasattr(obj, "data"):
+                mass = getattr(obj.data, "default_mass", None)
+                if mass is None:
+                    mass = getattr(obj.data, "mass", None)
+                if mass is not None:
+                    geometry["mass"] = float(mass)
+            if geometry["static_friction"] is None and hasattr(obj, "data"):
+                static_friction = getattr(obj.data, "static_friction", None)
+                if static_friction is not None:
+                    geometry["static_friction"] = float(static_friction)
+        except Exception:
+            pass
+
+        bbox = None
+        if hasattr(obj, "get_bounding_box"):
+            try:
+                bbox = obj.get_bounding_box()
+            except Exception:
+                bbox = None
+        if bbox is not None:
+            upper = getattr(bbox, "upper", None)
+            lower = getattr(bbox, "lower", None)
+            if upper is not None and lower is not None:
+                upper = _as_tuple(upper)
+                lower = _as_tuple(lower)
+                if len(upper) >= 3 and len(lower) >= 3:
+                    geometry["width"] = float(upper[0] - lower[0])
+                    geometry["depth"] = float(upper[1] - lower[1])
+                    geometry["height"] = float(upper[2] - lower[2])
+                    geometry["raw_bounding_box"] = {
+                        "upper": list(upper),
+                        "lower": list(lower),
+                    }
+                    return geometry
+    except Exception:
+        pass
+
+    return geometry
+
 
 # Standardize xform ops on any xformable prim before validation so that object
 # references to Mesh prims (e.g. kitchen Counter_Top_A) do not fail the
@@ -89,6 +438,7 @@ _captured_metrics: dict[str, dict] = {}
 _captured_rollout: dict[str, dict] = {}
 _captured_jobs: dict[str, dict] = {}
 _captured_episode_traces: list[list[dict[str, Any]]] = []
+_captured_asset_info: dict[str, Any] = {}
 
 
 def _load_job_config() -> dict[str, Any]:
@@ -388,6 +738,32 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]], success_condit
                 "end_step": len(trace) - 1,
             })
 
+        # Gate audit: collect DESCEND phase diagnostics if available.
+        descend_steps = [s for s in trace if s.get("phase") == "DESCEND"]
+        gate_diagnostics = [s for s in descend_steps if s.get("grasp_dist_error") is not None]
+        min_grasp_z_error = min(
+            (s.get("grasp_z_error") for s in gate_diagnostics if s.get("grasp_z_error") is not None),
+            default=None,
+        )
+        min_grasp_dist = min(
+            (s.get("grasp_dist_error") for s in gate_diagnostics if s.get("grasp_dist_error") is not None),
+            default=None,
+        )
+        descend_exit_step = None
+        for i, s in enumerate(trace):
+            if s.get("phase") == "GRASP":
+                descend_exit_step = i
+                break
+        blocking_reason_counts: dict[str, int] = {}
+        for s in gate_diagnostics:
+            reason = s.get("transition_blocking_reason")
+            if reason:
+                blocking_reason_counts[reason] = blocking_reason_counts.get(reason, 0) + 1
+        dominant_blocking_reason = max(blocking_reason_counts, key=blocking_reason_counts.get) if blocking_reason_counts else None
+        transition_nearly_satisfied = bool(
+            gate_diagnostics and gate_diagnostics[-1].get("transition_allowed")
+        )
+
         episode_metrics.append({
             "episode": ep_idx,
             "success": success,
@@ -414,6 +790,13 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]], success_condit
             "grasp_phase_reached": "GRASP" in phases_reached,
             "lift_phase_reached": "LIFT" in phases_reached,
             "target_reached": success,
+            "descend_steps": len(descend_steps),
+            "descend_exit_step": descend_exit_step,
+            "min_grasp_z_error": round(min_grasp_z_error, 6) if min_grasp_z_error is not None else None,
+            "min_grasp_dist": round(min_grasp_dist, 6) if min_grasp_dist is not None else None,
+            "dominant_blocking_reason": dominant_blocking_reason,
+            "transition_nearly_satisfied": transition_nearly_satisfied,
+            "gate_diagnostics": gate_diagnostics,
         })
         # Append raw first/last positions for calibration and detailed reports.
         if trace:
@@ -491,6 +874,30 @@ def _compute_progress_metrics(traces: list[list[dict[str, Any]]], success_condit
         "policy_metadata": policy_metadata,
         "failure_counts": failure_counts,
         "episode_metrics": episode_metrics,
+        # Gate audit aggregates.
+        "descend_exit_rate": round(
+            sum(1 for e in episode_metrics if e["descend_exit_step"] is not None) / len(episode_metrics), 4
+        ),
+        "grasp_phase_reached_rate": round(
+            sum(1 for e in episode_metrics if e["grasp_phase_reached"]) / len(episode_metrics), 4
+        ),
+        "lift_phase_reached_rate": round(
+            sum(1 for e in episode_metrics if e["lift_phase_reached"]) / len(episode_metrics), 4
+        ),
+        "min_grasp_z_error_mean": round(
+            sum(e["min_grasp_z_error"] for e in episode_metrics if e["min_grasp_z_error"] is not None)
+            / max(1, sum(1 for e in episode_metrics if e["min_grasp_z_error"] is not None)),
+            6,
+        ),
+        "min_grasp_dist_mean": round(
+            sum(e["min_grasp_dist"] for e in episode_metrics if e["min_grasp_dist"] is not None)
+            / max(1, sum(1 for e in episode_metrics if e["min_grasp_dist"] is not None)),
+            6,
+        ),
+        "dominant_blocking_reason_distribution": {
+            reason: sum(1 for e in episode_metrics if e["dominant_blocking_reason"] == reason)
+            for reason in set(e["dominant_blocking_reason"] for e in episode_metrics if e["dominant_blocking_reason"])
+        },
     }
 
     if is_oracle:
@@ -557,6 +964,12 @@ def _write_metrics_file() -> None:
         except Exception as e:
             output["trace_error"] = str(e)
             pass
+
+    # Source 5: asset fidelity / benchmark validity information
+    global _captured_asset_info
+    if _captured_asset_info:
+        output.setdefault("asset_info", _captured_asset_info.get("asset_info"))
+        output.setdefault("benchmark_validity", _captured_asset_info.get("benchmark_validity"))
 
     if _captured_episode_traces:
         progress_summary = _compute_progress_metrics(_captured_episode_traces, _SUCCESS_CONDITIONS)
@@ -681,6 +1094,120 @@ try:
     JobManager.complete_job = _patched_complete
 except Exception:
     pass
+
+# Patch procedural object spawn configs from task physics_ablation metadata.
+# This must run before the environment builds its scene, but after Isaac Sim
+# has initialized (so pxr is available).  We therefore patch eval_runner.load_env
+# which is called after SimulationApp startup.
+try:
+    import isaaclab_arena.evaluation.eval_runner as _eval_runner_mod
+
+    _PHYSICS_ABLATION = dict(_JOB_CONFIG.get("physics_ablation") or {})
+
+    def _apply_physics_ablation_to_spawn(spawn_cfg: Any) -> None:
+        if spawn_cfg is None:
+            return
+        if "size" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "size"):
+            spawn_cfg.size = tuple(_PHYSICS_ABLATION["size"])
+        if "static_friction" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "physics_material"):
+            spawn_cfg.physics_material.static_friction = float(_PHYSICS_ABLATION["static_friction"])
+            spawn_cfg.physics_material.dynamic_friction = float(
+                _PHYSICS_ABLATION.get("dynamic_friction", _PHYSICS_ABLATION["static_friction"])
+            )
+        if "mass" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "mass_props"):
+            spawn_cfg.mass_props.mass = float(_PHYSICS_ABLATION["mass"])
+        if "contact_offset" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "collision_props"):
+            spawn_cfg.collision_props.contact_offset = float(_PHYSICS_ABLATION["contact_offset"])
+        if "rest_offset" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "collision_props"):
+            spawn_cfg.collision_props.rest_offset = float(_PHYSICS_ABLATION["rest_offset"])
+        if "torsional_patch_radius" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "collision_props"):
+            spawn_cfg.collision_props.torsional_patch_radius = float(_PHYSICS_ABLATION["torsional_patch_radius"])
+        if "min_torsional_patch_radius" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "collision_props"):
+            spawn_cfg.collision_props.min_torsional_patch_radius = float(
+                _PHYSICS_ABLATION["min_torsional_patch_radius"]
+            )
+        if "solver_velocity_iteration_count" in _PHYSICS_ABLATION and hasattr(spawn_cfg, "rigid_props"):
+            spawn_cfg.rigid_props.solver_velocity_iteration_count = int(
+                _PHYSICS_ABLATION["solver_velocity_iteration_count"]
+            )
+
+    _orig_load_env = _eval_runner_mod.load_env
+
+    def _patched_load_env(arena_env_args: list[str], job_name: str, render_mode: str | None = None):
+        global _captured_asset_info
+        if _PHYSICS_ABLATION:
+            try:
+                import isaaclab_arena.assets.object_library as _obj_library
+
+                _orig_generate = _obj_library.ProceduralCube._generate_rigid_cfg
+
+                def _patched_generate(self: Any) -> Any:
+                    cfg = _orig_generate(self)
+                    _apply_physics_ablation_to_spawn(getattr(cfg, "spawn", None))
+                    return cfg
+
+                _obj_library.ProceduralCube._generate_rigid_cfg = _patched_generate
+                sys.stderr.write(f"[RUN_EVAL] applied physics_ablation to ProceduralCube: {_PHYSICS_ABLATION}\n")
+                sys.stderr.flush()
+            except Exception as exc:
+                sys.stderr.write(f"[RUN_EVAL] physics_ablation patch failed: {exc}\n")
+                sys.stderr.flush()
+        else:
+            sys.stderr.write("[RUN_EVAL] no physics_ablation in job config\n")
+            sys.stderr.flush()
+
+        env = _orig_load_env(arena_env_args, job_name, render_mode)
+
+        # Asset fidelity: check whether the requested object was actually loaded.
+        try:
+            asset_policy = _load_asset_policy(_JOB_CONFIG)
+            requested_object = _load_requested_object(_JOB_CONFIG)
+            scene = getattr(env, "unwrapped", env).scene
+            resolution = _resolve_asset_from_scene(requested_object, scene)
+            validity, abort = _compute_benchmark_validity(resolution, asset_policy)
+
+            # Object geometry: capture from scene and forward to the policy so it
+            # can adapt grasp thresholds to the actual loaded object.
+            object_geometry = _extract_geometry_from_scene(scene, object_name=resolution.loaded_object)
+            if _POLICY_CONFIG.get("use_object_geometry_adaptation") and not _POLICY_CONFIG.get("object_geometry"):
+                _POLICY_CONFIG["object_geometry"] = object_geometry
+                sys.stderr.write(f"[RUN_EVAL] object_geometry injected into policy config: {json.dumps(object_geometry)}\n")
+                sys.stderr.flush()
+
+            asset_info_payload = {
+                "asset_info": resolution.to_dict(),
+                "benchmark_validity": validity.to_dict(),
+                "object_geometry": object_geometry,
+            }
+            _captured_asset_info = asset_info_payload
+            sys.stderr.write(f"[RUN_EVAL] asset_info: {json.dumps(asset_info_payload)}\n")
+            sys.stderr.flush()
+
+            if abort:
+                sys.stderr.write(
+                    f"[RUN_EVAL] ABORT: required official asset '{requested_object}' was not loaded.\n"
+                )
+                sys.stderr.flush()
+                try:
+                    env.close()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"environment_invalid: required asset '{requested_object}' missing; "
+                    f"loaded '{resolution.loaded_object}' instead."
+                )
+        except Exception as exc:
+            sys.stderr.write(f"[RUN_EVAL] asset_resolution check failed: {exc}\n")
+            sys.stderr.flush()
+
+        return env
+
+    _eval_runner_mod.load_env = _patched_load_env
+except Exception as _phys_abl_exc:
+    sys.stderr.write(f"[RUN_EVAL] failed to install load_env hook: {_phys_abl_exc}\n")
+    sys.stderr.flush()
+    import traceback
+    traceback.print_exc()
 
 # Import eval_runner AFTER patching policy_runner so the imported
 # rollout_policy reference points to our patched function.

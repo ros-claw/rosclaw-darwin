@@ -1,0 +1,44 @@
+id: goal_pose_dex_cube_official
+name: Goal Pose with Registered DexCube
+version: "1.0"
+description: Official cube_goal_pose benchmark using the registered dex_cube asset. Silent procedural fallback is disabled.
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose, official]
+metadata:
+  difficulty: 1.0
+  official_arena_asset: true
+  diagnostic_variant: false
+  arena_env_args:
+    environment: cube_goal_pose
+    object: dex_cube
+    embodiment: franka_ik_abs
+  asset_policy:
+    require_official_asset: true
+    allow_procedural_fallback: false
+    diagnostic_variant: false

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}OOD Adaptation - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧪 OOD Adaptation</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Procedural OOD Diagnostic Aggregate</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  {% if data.conditions %}
+  <table>
+    <tr>
+      <th>Condition</th>
+      <th>Success Rate</th>
+      <th>Episodes</th>
+      <th>Mean Progress</th>
+    </tr>
+    {% for condition, metrics in data.conditions.items() %}
+    <tr>
+      <td><code>{{ condition }}</code></td>
+      <td class="metric">{{ "%.2f"|format((metrics.success_rate or 0.0) * 100) }}%</td>
+      <td>{{ metrics.num_episodes or metrics.episodes or 'n/a' }}</td>
+      <td class="metric">{{ "%.4f"|format(metrics.progress_mean or 0.0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <div style="margin-top:1rem;">
+    <img src="/ood-adaptation/chart.svg" alt="OOD adaptation chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No OOD adaptation data yet. Run procedural OOD diagnostics to populate.</p></div>
+{% endif %}
+{% endblock %}
