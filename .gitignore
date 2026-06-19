@@ -8,4 +8,6 @@ __pycache__/
 darwin_results/
 *.mcap
 data/
+data_v16/
+data_v17/
 *.db
