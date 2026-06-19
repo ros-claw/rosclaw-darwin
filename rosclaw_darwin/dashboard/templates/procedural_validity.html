@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Procedural Validity - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🔍 Procedural Object Validity Audit</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Validity Summary by Task</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  <table>
+    <tr>
+      <th>Task</th>
+      <th>Valid Rate</th>
+      <th>Rigid Body %</th>
+      <th>Collision %</th>
+      <th>Index Consistency %</th>
+      <th>Object Z Range</th>
+      <th>Error Distribution</th>
+    </tr>
+    {% for task_id, summary in data.per_task.items() %}
+    <tr>
+      <td><code>{{ task_id }}</code></td>
+      <td class="metric">{{ "%.2f"|format((summary.valid_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.rigid_body_enabled_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.collision_enabled_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.object_index_consistency_rate or 0.0) * 100) }}%</td>
+      <td>{{ summary.object_z_range }}</td>
+      <td><code>{{ summary.error_distribution }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/procedural-validity/chart.svg" alt="Procedural validity chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+  {% if not data.any_valid %}
+  <div class="card" style="background:#fff4e6;">
+    <strong>⚠️ OOD adaptation is blocked.</strong> Procedural object validity has not passed. Skill evaluation cannot proceed until the object state is valid.
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><p>No procedural validity audit data yet. Run <code>scripts/diagnostics/run_procedural_object_validity_audit.py</code> to populate.</p></div>
+{% endif %}
+{% endblock %}

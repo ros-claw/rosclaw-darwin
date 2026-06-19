@@ -42,19 +42,20 @@ This report summarizes the evidence produced by the v1.6 follow-up plan, organiz
    - Report: `reports/PRE_GRASP_YAW_ALIGNMENT_V2_REPORT.md`
 
 3. **Structural FailureToHint v3.1**
-   - `CONTACT_VERIFY`, `LIFT_VERIFY`, and `REGRASP` phases implemented.
+   - `CONTACT_VERIFY`, `LIFT_VERIFY`, and `REGRASP` phases implemented and unit-tested.
    - Does not regress official dex_cube seed 0.
-   - Does not help procedural OOD because the failure occurs before `GRASP`.
+   - **No empirical gain observed yet:** the procedural OOD failure occurs before `DESCEND` exits, so the structural phases are never reached.
    - Report: `reports/STRUCTURAL_FAILURE_TO_HINT_V31_REPORT.md`
 
 ---
 
 ## Level C — Not Proven
 
-1. **Procedural OOD full success**
-   - Procedural fallback still fails to lift; object sometimes falls through the floor (`object_height_delta ≈ -6250 m`).
+1. **Procedural OOD validity not established**
+   - Procedural fallback still fails to lift; object sometimes exhibits catastrophic state anomalies (`object_height_delta ≈ -6250 m` / `-2496 m`).
    - Contact-proxy diagnosis is empty because `DESCEND` does not exit.
-   - Root cause remains **asset-fidelity-induced policy-object geometry/gate mismatch**.
+   - **Root cause remains unresolved asset-fidelity / object-state anomaly, not a validated policy-object mismatch.**
+   - Procedural OOD cannot serve as a valid generalization benchmark until object validity is established.
    - Reports: `reports/PROCEDURAL_CONTACT_DIAGNOSIS_REPORT.md`, `reports/PROCEDURAL_OOD_ADAPTIVE_RECOVERY_REPORT.md`
 
 2. **Cross-yaw generalization**
@@ -106,8 +107,8 @@ This report summarizes the evidence produced by the v1.6 follow-up plan, organiz
 | GRASP pose-hold fixes slip seeds | 20/20 → 44/50 | **Level A** |
 | reachability planner fixes approach collisions | 17/17 cluster fixed; 50-seed regression 49/50 | **Level A** |
 | yaw alignment v2 reduces large-yaw slip | reduced matrix: helps small yaw, not π/2 or 2π/3 | **Level B** |
-| structural FTH v3.1 advances boundary | infrastructure ready, no procedural gain | **Level B** |
-| procedural OOD success | no | **Level C** |
+| structural FTH v3.1 advances boundary | infrastructure ready, no valid OOD evidence yet | **Level B** |
+| procedural OOD success | object-state validity not established; cannot claim skill failure | **Level C** |
 | cross-yaw generalization | reduced matrix done, large-yaw orientation remains unsolved | **Level B** |
 | cross-object generalization | 30 runs, lifted_rate=0 across all procedural variants; structural hints ineffective | **Level C** |
 
@@ -119,6 +120,8 @@ This report summarizes the evidence produced by the v1.6 follow-up plan, organiz
 2. ✅ 50-seed regression completed: 49/50 success, 0 approach collisions. `reachability_strategy: side_pregrasp_positive_y` promoted to default v3 config. Post-promotion smoke test on seeds 0–4: 5/5 success.
 3. ✅ Reduced cross-yaw matrix completed; cross-object matrix completed. Both reports updated.
 4. ✅ Pushed the procedural-fallback asset-fidelity questions to the Arena team: [IsaacLab-Arena#807](https://github.com/isaac-sim/IsaacLab-Arena/issues/807).
+5. ⏳ **v1.7 Sprint 1:** Run post-reachability official 100-seed validation with `configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml`.
+6. ⏳ **v1.7 Sprint 2:** Audit procedural object validity (root pose, bbox, collision, rigid body, metric/policy object index, step-0 perturbation) before any further OOD skill evaluation.
 
 ---
 

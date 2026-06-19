@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Large-Yaw Slip - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧭 Large-Yaw Slip Mechanism Diagnosis</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Diagnosis Summary by Target Yaw</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  <table>
+    <tr>
+      <th>Target Yaw</th>
+      <th>Valid Count</th>
+      <th>Lifted Rate</th>
+      <th>Orient Achieved</th>
+      <th>Mean Object Yaw Error</th>
+      <th>Mean Coupling Score</th>
+      <th>Category Distribution</th>
+    </tr>
+    {% for yaw_key, summary in data.per_yaw.items() %}
+    <tr>
+      <td><code>{{ yaw_key }}</code></td>
+      <td class="metric">{{ summary.valid_count }}</td>
+      <td class="metric">{{ "%.2f"|format((summary.lifted_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.orientation_achieved_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.3f"|format(summary.mean_object_yaw_final_error or 0.0) }}</td>
+      <td class="metric">{{ "%.3f"|format(summary.mean_yaw_coupling_score or 0.0) }}</td>
+      <td><code>{{ summary.category_distribution }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/large-yaw-slip/chart.svg" alt="Large yaw slip chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>Large-yaw slip diagnosis data not yet available. Run <code>scripts/diagnostics/run_large_yaw_slip_diagnosis.py</code> to populate.</p></div>
+{% endif %}
+{% endblock %}

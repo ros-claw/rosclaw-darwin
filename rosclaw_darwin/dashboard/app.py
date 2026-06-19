@@ -168,11 +168,65 @@ class DashboardApp:
                 )
             )
 
+        @self.app.get("/official-post-reachability", response_class=HTMLResponse)
+        async def official_post_reachability_page(request: Request) -> Any:
+            data = self._load_official_post_reachability()
+            return self.templates.TemplateResponse(request, "official_post_reachability.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/official-post-reachability/chart.svg", response_class=SVGResponse)
+        async def official_post_reachability_chart() -> Any:
+            data = self._load_official_post_reachability()
+            if data is None:
+                return SVGResponse(content=charts.plot_official_post_reachability(0.82, None, None), status_code=404)
+            return SVGResponse(
+                content=charts.plot_official_post_reachability(
+                    data.get("old_success_rate", 0.82),
+                    data.get("regression_success_rate"),
+                    data.get("new_success_rate"),
+                )
+            )
+
+        @self.app.get("/procedural-validity", response_class=HTMLResponse)
+        async def procedural_validity_page(request: Request) -> Any:
+            data = self._load_procedural_validity()
+            return self.templates.TemplateResponse(request, "procedural_validity.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/procedural-validity/chart.svg", response_class=SVGResponse)
+        async def procedural_validity_chart() -> Any:
+            data = self._load_procedural_validity()
+            if data is None:
+                return SVGResponse(content=charts.plot_procedural_validity({}), status_code=404)
+            return SVGResponse(content=charts.plot_procedural_validity(data.get("per_task", {})))
+
+        @self.app.get("/large-yaw-slip", response_class=HTMLResponse)
+        async def large_yaw_slip_page(request: Request) -> Any:
+            data = self._load_large_yaw_slip()
+            return self.templates.TemplateResponse(request, "large_yaw_slip.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/large-yaw-slip/chart.svg", response_class=SVGResponse)
+        async def large_yaw_slip_chart() -> Any:
+            data = self._load_large_yaw_slip()
+            if data is None:
+                return SVGResponse(content=charts.plot_large_yaw_slip({}), status_code=404)
+            return SVGResponse(content=charts.plot_large_yaw_slip(data.get("per_yaw", {})))
+
         @self.app.get("/ood-adaptation", response_class=HTMLResponse)
         async def ood_adaptation_page(request: Request) -> Any:
+            validity = self._load_procedural_validity()
+            blocked = validity is not None and not validity.get("any_valid", False)
             data = self._load_ood_adaptation()
             return self.templates.TemplateResponse(request, "ood_adaptation.html", {
-                "has_data": data is not None,
+                "has_data": data is not None and not blocked,
+                "blocked": blocked,
                 "data": data or {},
             })
 
@@ -666,6 +720,89 @@ class DashboardApp:
                     return data
                 except Exception:
                     pass
+        return None
+
+    def _load_official_post_reachability(self) -> dict[str, Any] | None:
+        """Load official benchmark trajectory: old, regression, post-reachability."""
+        old_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/arena_real/dex_cube_goal_pose_100_seed_v16/aggregate_summary.json")
+        regression_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/arena_real/dex_cube_goal_pose_reachability_regression/aggregate_summary.json")
+        new_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v17/official/dex_cube_goal_pose_100_seed_post_reachability/aggregate_summary.json")
+
+        old_sr: float | None = None
+        if old_path.exists():
+            try:
+                old_sr = float(json.loads(old_path.read_text()).get("overall_success_rate", 0.82))
+            except Exception:
+                pass
+
+        regression_sr: float | None = None
+        if regression_path.exists():
+            try:
+                regression_sr = float(json.loads(regression_path.read_text()).get("overall_success_rate"))
+            except Exception:
+                pass
+
+        new_sr: float | None = None
+        failure_distribution: dict[str, int] = {}
+        if new_path.exists():
+            try:
+                data = json.loads(new_path.read_text())
+                new_sr = float(data.get("overall_success_rate"))
+                failure_distribution = data.get("failure_distribution", {})
+            except Exception:
+                pass
+
+        if old_sr is None and regression_sr is None and new_sr is None:
+            return None
+        return {
+            "old_success_rate": old_sr or 0.82,
+            "regression_success_rate": regression_sr,
+            "new_success_rate": new_sr,
+            "failure_distribution": failure_distribution,
+            "_source_path": str(new_path) if new_path.exists() else None,
+        }
+
+    def _load_procedural_validity(self) -> dict[str, Any] | None:
+        """Load procedural object validity audit aggregate."""
+        p = self._resolve_data_v17_path("diagnostics/procedural_object_validity_audit/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            per_task = data.get("per_task", {})
+            any_valid = any(
+                (t.get("valid_rate") or 0.0) >= 1.0 for t in per_task.values()
+            )
+            return {
+                "per_task": per_task,
+                "any_valid": any_valid,
+                "_source_path": str(p),
+            }
+        except Exception:
+            return None
+
+    def _load_large_yaw_slip(self) -> dict[str, Any] | None:
+        """Load large-yaw slip diagnosis aggregate."""
+        p = self._resolve_data_v17_path("diagnostics/large_yaw_slip/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            return {
+                "per_yaw": data,
+                "_source_path": str(p),
+            }
+        except Exception:
+            return None
+
+    def _resolve_data_v17_path(self, relative_path: str) -> Path | None:
+        """Resolve a v1.7 data path, preferring the canonical project location."""
+        canonical = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v17") / relative_path
+        if canonical.exists():
+            return canonical
+        fallback = self.data_dir.parent / "data_v17" / relative_path
+        if fallback.exists():
+            return fallback
         return None
 
     def run(self, host: str = "0.0.0.0", port: int = 8080) -> None:

@@ -214,6 +214,8 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
                 # Mount heuristic policy (can be referenced by full module path)
                 "-v", f"{DEPS_DIR / 'heuristic_policy.py'}:/workspace/data/heuristic_policy.py",
+                # Mount object validity audit policy
+                "-v", f"{DEPS_DIR / 'object_validity_audit_policy.py'}:/workspace/data/object_validity_audit_policy.py",
                 # Mount patched lift environment (uses procedural_table instead of table)
                 "-v", f"{DEPS_DIR / 'lift_object_environment.py'}:/workspace/isaaclab_arena_environments/lift_object_environment.py",
                 # Mount patched replay policy (fixes None-check ordering bug)

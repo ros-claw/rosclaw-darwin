@@ -459,3 +459,127 @@ def plot_transfer_matrix(ablations: list[dict[str, Any]], width: int = 700, heig
 
     svg += _svg_end()
     return svg
+
+
+def plot_procedural_validity(summary: dict[str, Any], width: int = 800, height: int = 320) -> str:
+    """Bar chart of procedural object validity rates per task."""
+    if not summary:
+        return _svg_start(width, height, "No procedural validity data") + _text(width / 2, height / 2, "No procedural validity data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 40, "bottom": 100, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Procedural object validity")
+    svg += _text(width / 2, 24, "Procedural Object Validity Audit", anchor="middle", size=14, color="#1a1a2e")
+
+    labels = list(summary.keys())
+    values = [summary[k].get("valid_rate", 0.0) or 0.0 for k in labels]
+    n = len(labels)
+    bar_w = min(80, plot_w / max(n, 1) * 0.6)
+    spacing = plot_w / max(n, 1)
+
+    for i, (label, val) in enumerate(zip(labels, values)):
+        x = margin["left"] + i * spacing + spacing / 2 - bar_w / 2
+        h = max(1, val * plot_h)
+        fill = "#2b8a3e" if val >= 1.0 else ("#e67700" if val > 0.0 else "#c92a2a")
+        svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, fill, rx=2)
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h - h - 6, f"{val:.2f}", anchor="middle", size=10, color="#212529")
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h + 18, label, anchor="end", size=10, color="#495057", rotate=45)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ty = margin["top"] + plot_h - t * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    svg += _svg_end()
+    return svg
+
+
+def plot_large_yaw_slip(per_yaw: dict[str, dict[str, Any]], width: int = 900, height: int = 400) -> str:
+    """Grouped bars for lifted / orientation_achieved / env_success per target yaw plus category distribution."""
+    if not per_yaw:
+        return _svg_start(width, height, "No large yaw data") + _text(width / 2, height / 2, "No large yaw data", anchor="middle", size=14) + _svg_end()
+
+    margin = {"top": 60, "right": 140, "bottom": 80, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Large yaw slip diagnosis")
+    svg += _text(width / 2, 24, "Large-Yaw Slip Diagnosis", anchor="middle", size=14, color="#1a1a2e")
+
+    yaws = sorted(per_yaw.keys())
+    n = len(yaws)
+    group_w = plot_w / n
+    bar_w = group_w * 0.22
+    metrics = ["lifted_rate", "orientation_achieved_rate", "env_success_rate"]
+    metric_labels = ["lifted", "orient", "env succ"]
+
+    for i, yaw in enumerate(yaws):
+        gx = margin["left"] + i * group_w
+        data = per_yaw.get(yaw, {})
+        for j, metric in enumerate(metrics):
+            val = float(data.get(metric, 0.0) or 0.0)
+            x = gx + group_w * 0.15 + j * (bar_w + 4)
+            h = max(1, val * plot_h)
+            svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, _bar_color(j), rx=2)
+        svg += _text(gx + group_w / 2, margin["top"] + plot_h + 20, yaw, anchor="middle", size=10, color="#495057", rotate=30)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ty = margin["top"] + plot_h - t * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    lx = margin["left"] + plot_w + 20
+    ly = margin["top"] + 20
+    for j, label in enumerate(metric_labels):
+        svg += _rect(lx, ly + j * 22, 12, 12, _bar_color(j), rx=2)
+        svg += _text(lx + 18, ly + j * 22 + 10, label, size=10)
+
+    svg += _svg_end()
+    return svg
+
+
+def plot_official_post_reachability(
+    old_success_rate: float,
+    regression_success_rate: float | None,
+    new_success_rate: float | None,
+    width: int = 800,
+    height: int = 320,
+) -> str:
+    """Bar chart comparing old, regression, and post-reachability official scores."""
+    margin = {"top": 60, "right": 40, "bottom": 80, "left": 60}
+    plot_w = width - margin["left"] - margin["right"]
+    plot_h = height - margin["top"] - margin["bottom"]
+
+    svg = _svg_start(width, height, "Official post-reachability benchmark")
+    svg += _text(width / 2, 24, "Official Benchmark Score Trajectory", anchor="middle", size=14, color="#1a1a2e")
+
+    labels = ["old 100-seed", "50-seed regression", "post-reachability 100-seed"]
+    values = [old_success_rate, regression_success_rate, new_success_rate]
+    colors = ["#0b7285", "#5f3dc4", "#2b8a3e"]
+    n = len(labels)
+    bar_w = min(80, plot_w / n * 0.6)
+    spacing = plot_w / n
+
+    for i, (label, val, color) in enumerate(zip(labels, values, colors)):
+        x = margin["left"] + i * spacing + spacing / 2 - bar_w / 2
+        h = max(1, (val or 0.0) * plot_h)
+        svg += _rect(x, margin["top"] + plot_h - h, bar_w, h, color, rx=2)
+        text = f"{val:.2f}" if val is not None else "pending"
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h - h - 6, text, anchor="middle", size=10, color="#212529")
+        svg += _text(x + bar_w / 2, margin["top"] + plot_h + 18, label, anchor="end", size=10, color="#495057", rotate=30)
+
+    svg += _line(margin["left"], margin["top"], margin["left"], margin["top"] + plot_h)
+    svg += _line(margin["left"], margin["top"] + plot_h, margin["left"] + plot_w, margin["top"] + plot_h)
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        ty = margin["top"] + plot_h - t * plot_h
+        svg += _line(margin["left"] - 4, ty, margin["left"], ty, width=1)
+        svg += _text(margin["left"] - 8, ty + 4, f"{t:.2f}", anchor="end", size=10, color="#495057")
+
+    svg += _svg_end()
+    return svg

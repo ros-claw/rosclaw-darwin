@@ -52,6 +52,14 @@
 - [Procedural OOD Adaptive Recovery Report](PROCEDURAL_OOD_ADAPTIVE_RECOVERY_REPORT.md) — FBA-based adaptive recovery ablation.
 - [Cross-Object / Cross-Yaw Generalization Report](CROSS_OBJECT_CROSS_YAW_GENERALIZATION_REPORT.md) — unified generalization matrix.
 - [Final Darwin v1.6 Status Report](FINAL_DARWIN_V16_STATUS_REPORT.md) — Level A/B/C/D evidence summary.
+- [V1.6 Evidence Reconciliation Report](V16_EVIDENCE_RECONCILIATION_REPORT.md) — re-classification of v1.6 results into official / promoted / invalid / experimental buckets.
+- [Dex-Cube Goal Pose 100-Seed Post-Reachability Report](DEX_CUBE_GOAL_POSE_100_SEED_POST_REACHABILITY_REPORT.md) — v1.7 official 100-seed validation with the promoted reachability config.
+- [Procedural Object Validity Audit Report](PROCEDURAL_OBJECT_VALIDITY_AUDIT_REPORT.md) — object-state audit before OOD skill evaluation.
+- [Procedural Object Validity Repair Report](PROCEDURAL_OBJECT_VALIDITY_REPAIR_REPORT.md) — repairs applied after the validity audit.
+- [Procedural OOD Recovery After Validity Report](PROCEDURAL_OOD_RECOVERY_AFTER_VALIDITY_REPORT.md) — adaptive recovery ablation only if validity passes.
+- [Large-Yaw Slip Mechanism Report](LARGE_YAW_SLIP_MECHANISM_REPORT.md) — yaw-coupling diagnosis for π/2 and 2π/3 target yaws.
+- [Large-Yaw Targeted Intervention Report](LARGE_YAW_TARGETED_INTERVENTION_REPORT.md) — grasp-at-target-yaw and low-height-incremental-yaw ablations.
+- [Final Darwin v1.7 Status Report](FINAL_DARWIN_V17_STATUS_REPORT.md) — Level A/B/C/D evidence summary for v1.7.
 - [Arena Issue Tracker](ARENA_ISSUE_TRACKER.md) — consolidated P0/P1/P2 questions for the IsaacLab-Arena team and simulation experts.
 
 ## Evolution and ablation

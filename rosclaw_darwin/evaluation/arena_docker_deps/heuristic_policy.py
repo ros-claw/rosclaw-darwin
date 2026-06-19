@@ -601,6 +601,8 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
 
     # Reachability-aware approach planner (Sprint 1 v1.6).
     reachability_strategy: str = "direct_descend"
+    reachability_risk_estimator: bool = False
+    positive_y_workspace_risk: bool = False
     reachability_positive_y_threshold: float = 0.01
     reachability_positive_yaw_threshold: float = 0.0
     high_pregrasp_z_offset: float = 0.25
@@ -618,6 +620,7 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
 
     # Structural FailureToHint v3.1 regrasp controls (Sprint 4 v1.6).
     enable_regrasp: bool = False
+    structural_regrasp: bool = False
     max_regrasp_attempts: int = 0
     regrasp_xy_offsets: list[list[float]] | None = None
     verify_lift_response_steps: int = 0
@@ -629,6 +632,15 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     # generalization by forcing the policy to align the object to a different
     # yaw while keeping the same asset and initial pose distribution.
     target_yaw_override: float | None = None
+
+    # Large-yaw targeted intervention strategies (Sprint 5 v1.7).
+    # These are intentionally structural strategy switches rather than a new
+    # state machine: they re-parameterise the existing PRE_GRASP_YAW_ALIGN /
+    # REORIENT phases to test whether the large-yaw failure is a coupling /
+    # torsional-slip problem or an in-hand-reorientation problem.
+    large_yaw_strategy: str | None = None  # "grasp_at_target_yaw" | "low_height_incremental_yaw"
+    disable_inhand_reorient: bool = False
+    lift_height_before_yaw: float = 0.05
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoGoalPosePolicyArgs":
@@ -1299,6 +1311,27 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         self._stabilize_steps_after_yaw = config.stabilize_steps_after_yaw
         self._skip_broken_yaw_control = config.skip_broken_yaw_control
         self._target_yaw_override = getattr(config, "target_yaw_override", None)
+
+        # Large-yaw targeted intervention strategy mapping (Sprint 5 v1.7).
+        # We deliberately keep this as a thin re-parameterisation of existing
+        # phases so we can ablate strategies without rewriting the state machine.
+        self._large_yaw_strategy = getattr(config, "large_yaw_strategy", None)
+        self._disable_inhand_reorient = getattr(config, "disable_inhand_reorient", False)
+        self._lift_height_before_yaw = getattr(config, "lift_height_before_yaw", 0.05)
+        if self._large_yaw_strategy == "grasp_at_target_yaw":
+            self._pre_grasp_yaw_align_v2 = True
+            self._pre_grasp_yaw_fraction = 1.0
+            self._post_grasp_yaw_residual_fraction = 0.0
+            self._reorient_before_align = False
+        elif self._large_yaw_strategy == "low_height_incremental_yaw":
+            self._pre_grasp_yaw_align_v2 = True
+            self._pre_grasp_yaw_fraction = getattr(config, "pre_grasp_yaw_fraction", 0.8)
+            self._post_grasp_yaw_residual_fraction = getattr(config, "post_grasp_yaw_residual_fraction", 0.2)
+            self._lift_height = self._lift_height_before_yaw
+            self._reorient_height_offset = self._lift_height_before_yaw
+            self._reorient_before_align = True
+        if self._disable_inhand_reorient:
+            self._reorient_before_align = False
 
         # Object-following verification state.
         self._object_following_verified = False

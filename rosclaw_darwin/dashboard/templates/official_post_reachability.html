@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Official Post-Reachability - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🏅 Official Post-Reachability Benchmark</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Benchmark Score Trajectory</h2>
+  {% if data._source_path %}
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  {% endif %}
+  <table>
+    <tr><th>Run</th><th>Success Rate</th></tr>
+    <tr><td>v1.6 old official 100-seed</td><td class="metric">{{ "%.2f"|format((data.old_success_rate or 0.0) * 100) }}%</td></tr>
+    <tr><td>v1.6 reachability 50-seed regression</td><td class="metric">{{ "%.2f"|format((data.regression_success_rate or 0.0) * 100) }}%</td></tr>
+    <tr><td>v1.7 post-reachability 100-seed</td><td class="metric">{{ "%.2f"|format((data.new_success_rate or 0.0) * 100) }}%</td></tr>
+  </table>
+  {% if data.failure_distribution %}
+  <h3>Post-Reachability Failure Distribution</h3>
+  <table>
+    <tr><th>Failure Type</th><th>Count</th></tr>
+    {% for ft, count in data.failure_distribution.items() %}
+    <tr><td><code>{{ ft }}</code></td><td class="metric">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <div style="margin-top:1rem;">
+    <img src="/official-post-reachability/chart.svg" alt="Post-reachability benchmark chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>Post-reachability 100-seed validation is still running. Check back when <code>data_v17/official/dex_cube_goal_pose_100_seed_post_reachability/aggregate_summary.json</code> is available.</p></div>
+{% endif %}
+{% endblock %}
