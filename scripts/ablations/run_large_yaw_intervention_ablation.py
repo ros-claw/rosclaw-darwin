@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Targeted large-yaw intervention ablation (Sprint 5 v1.7).
 
-Compares baseline, grasp-at-target-yaw, and low-height-incremental-yaw
-strategies on the official dex_cube task with target_yaw_override set to
-π/2 and 2π/3.  The goal is to determine whether the large-yaw failure is
-alleviated by removing in-hand reorientation or by reducing the height at
-which reorientation happens.
+Compares baseline, grasp-at-target-yaw, low-height-incremental-yaw, and
+(table push-align v1 + tuned) strategies on the official dex_cube task with
+ target_yaw_override set to π/2 and 2π/3.  The goal is to determine whether the
+large-yaw failure is alleviated by removing in-hand reorientation, reducing
+the height at which reorientation happens, or using table reaction friction.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ _CONDITION_CONFIGS = {
     "baseline": "configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml",
     "grasp_at_target_yaw": "configs/policies/heuristic_servo_goal_pose_v3_large_yaw_grasp_at_target.yaml",
     "low_height_incremental_yaw": "configs/policies/heuristic_servo_goal_pose_v3_large_yaw_low_height.yaml",
+    "table_push_align": "configs/policies/heuristic_servo_goal_pose_v3_large_yaw_table_push_align.yaml",
+    "table_push_align_tuned": "configs/policies/heuristic_servo_goal_pose_v3_large_yaw_table_push_align_tuned.yaml",
 }
 
 
@@ -52,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         "--conditions",
         type=str,
         nargs="+",
-        default=["baseline", "grasp_at_target_yaw", "low_height_incremental_yaw"],
+        default=["baseline", "grasp_at_target_yaw", "low_height_incremental_yaw", "table_push_align"],
         help="Intervention conditions to compare",
     )
     parser.add_argument(

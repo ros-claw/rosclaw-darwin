@@ -30,6 +30,9 @@ class DashboardApp:
     def _setup_routes(self) -> None:
         @self.app.get("/", response_class=HTMLResponse)
         async def index(request: Request) -> Any:
+            cards = self._load_evidence_cards()
+            registry = self._load_registry()
+            blocked = self._load_blocked_external()
             return self.templates.TemplateResponse(request, "overview.html", {
                 "runs": self._load_runs(),
                 "evolution_runs": self._load_evolution_runs(),
@@ -38,6 +41,9 @@ class DashboardApp:
                 "candidates": self._load_candidates(),
                 "leaderboard": self._load_leaderboard(),
                 "memories": self._load_memory(),
+                "cards": cards,
+                "registry_count": len(registry),
+                "blocked_count": len(blocked),
             })
 
         @self.app.get("/runs", response_class=HTMLResponse)
@@ -219,6 +225,21 @@ class DashboardApp:
                 return SVGResponse(content=charts.plot_large_yaw_slip({}), status_code=404)
             return SVGResponse(content=charts.plot_large_yaw_slip(data.get("per_yaw", {})))
 
+        @self.app.get("/large-yaw-intervention", response_class=HTMLResponse)
+        async def large_yaw_intervention_page(request: Request) -> Any:
+            data = self._load_large_yaw_intervention()
+            return self.templates.TemplateResponse(request, "large_yaw_intervention.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/large-yaw-intervention/chart.svg", response_class=SVGResponse)
+        async def large_yaw_intervention_chart() -> Any:
+            data = self._load_large_yaw_intervention()
+            if data is None:
+                return SVGResponse(content=charts.plot_large_yaw_intervention({}), status_code=404)
+            return SVGResponse(content=charts.plot_large_yaw_intervention(data.get("per_condition", {})))
+
         @self.app.get("/ood-adaptation", response_class=HTMLResponse)
         async def ood_adaptation_page(request: Request) -> Any:
             validity = self._load_procedural_validity()
@@ -275,6 +296,313 @@ class DashboardApp:
             return SVGResponse(
                 content=charts.plot_target_yaw_matrix(data.get("per_target_yaw", {}))
             )
+
+        @self.app.get("/official-v18", response_class=HTMLResponse)
+        async def official_v18_page(request: Request) -> Any:
+            data = self._load_official_v18()
+            return self.templates.TemplateResponse(request, "official_v18.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/official-v18/chart.svg", response_class=SVGResponse)
+        async def official_v18_chart() -> Any:
+            data = self._load_official_v18()
+            if data is None:
+                return SVGResponse(content=charts.plot_official_v18(0.82, None, None), status_code=404)
+            return SVGResponse(
+                content=charts.plot_official_v18(
+                    data.get("old_success_rate", 0.82),
+                    data.get("post_reachability_success_rate"),
+                    data.get("seed24_fix_success_rate"),
+                )
+            )
+
+        @self.app.get("/valid-ood", response_class=HTMLResponse)
+        async def valid_ood_page(request: Request) -> Any:
+            validity = self._load_valid_ood_validity()
+            matrix = self._load_valid_ood_matrix()
+            return self.templates.TemplateResponse(request, "valid_ood.html", {
+                "has_validity": validity is not None,
+                "validity": validity or {},
+                "has_matrix": matrix is not None,
+                "matrix": matrix or {},
+            })
+
+        @self.app.get("/official-v19", response_class=HTMLResponse)
+        async def official_v19_page(request: Request) -> Any:
+            data = self._load_official_v19()
+            return self.templates.TemplateResponse(request, "official_v19.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/official-v19/chart.svg", response_class=SVGResponse)
+        async def official_v19_chart() -> Any:
+            data = self._load_official_v19()
+            if data is None:
+                return SVGResponse(content=charts.plot_official_v19(None), status_code=404)
+            return SVGResponse(content=charts.plot_official_v19(data))
+
+        @self.app.get("/contact-signal", response_class=HTMLResponse)
+        async def contact_signal_page(request: Request) -> Any:
+            data = self._load_contact_signal_trace()
+            return self.templates.TemplateResponse(request, "contact_signal.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/contact-signal/chart.svg", response_class=SVGResponse)
+        async def contact_signal_chart() -> Any:
+            data = self._load_contact_signal_trace()
+            if data is None:
+                return SVGResponse(content=charts.plot_contact_signal_timeline(None), status_code=404)
+            return SVGResponse(content=charts.plot_contact_signal_timeline(data.get("trace")))
+
+        @self.app.get("/residual-policy", response_class=HTMLResponse)
+        async def residual_policy_page(request: Request) -> Any:
+            data = self._load_residual_policy_stats()
+            return self.templates.TemplateResponse(request, "residual_policy.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/residual-policy/chart.svg", response_class=SVGResponse)
+        async def residual_policy_chart() -> Any:
+            data = self._load_residual_policy_stats()
+            if data is None:
+                return SVGResponse(content=charts.plot_residual_policy_stats(None), status_code=404)
+            return SVGResponse(content=charts.plot_residual_policy_stats(data))
+
+        @self.app.get("/valid-ood-subtasks", response_class=HTMLResponse)
+        async def valid_ood_subtasks_page(request: Request) -> Any:
+            data = self._load_valid_ood_subtasks()
+            return self.templates.TemplateResponse(request, "valid_ood_subtasks.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/valid-ood-subtasks/chart.svg", response_class=SVGResponse)
+        async def valid_ood_subtasks_chart() -> Any:
+            data = self._load_valid_ood_subtasks()
+            if data is None:
+                return SVGResponse(content=charts.plot_valid_ood_subtasks_matrix(None), status_code=404)
+            return SVGResponse(content=charts.plot_valid_ood_subtasks_matrix(data))
+
+        @self.app.get("/fth-v33", response_class=HTMLResponse)
+        async def fth_v33_page(request: Request) -> Any:
+            data = self._load_fth_v33()
+            return self.templates.TemplateResponse(request, "fth_v33.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/fth-v33/chart.svg", response_class=SVGResponse)
+        async def fth_v33_chart() -> Any:
+            data = self._load_fth_v33()
+            if data is None:
+                return SVGResponse(content=charts.plot_fth_v33_route_distribution(None), status_code=404)
+            return SVGResponse(content=charts.plot_fth_v33_route_distribution(data.get("routes")))
+
+        # v1.10 dashboard views -------------------------------------------------
+        @self.app.get("/paired-evaluation", response_class=HTMLResponse)
+        async def paired_evaluation_page(request: Request) -> Any:
+            data = self._load_paired_evaluation()
+            return self.templates.TemplateResponse(request, "paired_evaluation.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/paired-evaluation/chart.svg", response_class=SVGResponse)
+        async def paired_evaluation_chart() -> Any:
+            data = self._load_paired_evaluation()
+            if data is None:
+                return SVGResponse(content=charts.plot_paired_evaluation_summary(None), status_code=404)
+            return SVGResponse(content=charts.plot_paired_evaluation_summary(data))
+
+        @self.app.get("/contact-signal-v2", response_class=HTMLResponse)
+        async def contact_signal_v2_page(request: Request) -> Any:
+            data = self._load_contact_signal_v2()
+            return self.templates.TemplateResponse(request, "contact_signal_v2.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/contact-signal-v2/chart.svg", response_class=SVGResponse)
+        async def contact_signal_v2_chart() -> Any:
+            data = self._load_contact_signal_v2()
+            if data is None:
+                return SVGResponse(content=charts.plot_contact_signal_v2_coverage(None), status_code=404)
+            return SVGResponse(content=charts.plot_contact_signal_v2_coverage(data.get("coverage")))
+
+        @self.app.get("/learned-trigger", response_class=HTMLResponse)
+        async def learned_trigger_page(request: Request) -> Any:
+            data = self._load_learned_trigger()
+            return self.templates.TemplateResponse(request, "learned_trigger.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/learned-trigger/chart.svg", response_class=SVGResponse)
+        async def learned_trigger_chart() -> Any:
+            data = self._load_learned_trigger()
+            if data is None:
+                return SVGResponse(content=charts.plot_learned_trigger_metrics(None), status_code=404)
+            return SVGResponse(content=charts.plot_learned_trigger_metrics(data))
+
+        @self.app.get("/residual-policy-v2", response_class=HTMLResponse)
+        async def residual_policy_v2_page(request: Request) -> Any:
+            data = self._load_residual_policy_v2()
+            return self.templates.TemplateResponse(request, "residual_policy_v2.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/residual-policy-v2/chart.svg", response_class=SVGResponse)
+        async def residual_policy_v2_chart() -> Any:
+            data = self._load_residual_policy_v2()
+            if data is None:
+                return SVGResponse(content=charts.plot_residual_policy_v2_stats(None), status_code=404)
+            return SVGResponse(content=charts.plot_residual_policy_v2_stats(data))
+
+        @self.app.get("/valid-ood-medium", response_class=HTMLResponse)
+        async def valid_ood_medium_page(request: Request) -> Any:
+            data = self._load_valid_ood_medium()
+            return self.templates.TemplateResponse(request, "valid_ood_medium.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/valid-ood-medium/chart.svg", response_class=SVGResponse)
+        async def valid_ood_medium_chart() -> Any:
+            data = self._load_valid_ood_medium()
+            if data is None:
+                return SVGResponse(content=charts.plot_valid_ood_medium_tasks(None, None), status_code=404)
+            return SVGResponse(content=charts.plot_valid_ood_medium_tasks(data.get("selected"), data.get("rejected")))
+
+        @self.app.get("/fth-v34", response_class=HTMLResponse)
+        async def fth_v34_page(request: Request) -> Any:
+            data = self._load_fth_v34()
+            return self.templates.TemplateResponse(request, "fth_v34.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/fth-v34/chart.svg", response_class=SVGResponse)
+        async def fth_v34_chart() -> Any:
+            data = self._load_fth_v34()
+            if data is None:
+                return SVGResponse(content=charts.plot_fth_v34_evidence_status(None), status_code=404)
+            return SVGResponse(content=charts.plot_fth_v34_evidence_status(data.get("statuses")))
+
+        @self.app.get("/valid-ood/validity-chart.svg", response_class=SVGResponse)
+        async def valid_ood_validity_chart() -> Any:
+            data = self._load_valid_ood_validity()
+            if data is None:
+                return SVGResponse(content=charts.plot_valid_ood_validity({}), status_code=404)
+            return SVGResponse(content=charts.plot_valid_ood_validity(data.get("per_task", {})))
+
+        @self.app.get("/valid-ood/matrix-chart.svg", response_class=SVGResponse)
+        async def valid_ood_matrix_chart() -> Any:
+            data = self._load_valid_ood_matrix()
+            if data is None:
+                return SVGResponse(content=charts.plot_valid_ood_matrix({}), status_code=404)
+            return SVGResponse(content=charts.plot_valid_ood_matrix(data.get("by_condition", {})))
+
+        @self.app.get("/slip-monitor", response_class=HTMLResponse)
+        async def slip_monitor_page(request: Request) -> Any:
+            data = self._load_slip_monitor_validation()
+            return self.templates.TemplateResponse(request, "slip_monitor.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/slip-monitor/chart.svg", response_class=SVGResponse)
+        async def slip_monitor_chart() -> Any:
+            data = self._load_slip_monitor_validation()
+            if data is None:
+                return SVGResponse(content=charts.plot_slip_monitor_summary({}), status_code=404)
+            return SVGResponse(content=charts.plot_slip_monitor_summary(data.get("by_yaw", {})))
+
+        @self.app.get("/slip-recovery", response_class=HTMLResponse)
+        async def slip_recovery_page(request: Request) -> Any:
+            data = self._load_slip_recovery_ablation()
+            return self.templates.TemplateResponse(request, "slip_recovery.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/slip-recovery/chart.svg", response_class=SVGResponse)
+        async def slip_recovery_chart() -> Any:
+            data = self._load_slip_recovery_ablation()
+            if data is None:
+                return SVGResponse(content=charts.plot_slip_recovery_ablation({}), status_code=404)
+            return SVGResponse(
+                content=charts.plot_slip_recovery_ablation(data.get("per_condition_target", {}))
+            )
+
+        @self.app.get("/external-blockers", response_class=HTMLResponse)
+        async def external_blockers_page(request: Request) -> Any:
+            text = self._load_arena_issue_tracker_text()
+            return self.templates.TemplateResponse(request, "external_blockers.html", {
+                "has_data": text is not None,
+                "text": text or "Arena issue tracker not available.",
+            })
+
+        # v1.0 product views -----------------------------------------------------
+        @self.app.get("/validity", response_class=HTMLResponse)
+        async def validity_page(request: Request) -> Any:
+            data = self._load_validity_summary()
+            return self.templates.TemplateResponse(request, "validity.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/baselines", response_class=HTMLResponse)
+        async def baselines_page(request: Request) -> Any:
+            data = self._load_official_benchmark()
+            return self.templates.TemplateResponse(request, "baselines.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/paired-evaluations", response_class=HTMLResponse)
+        async def paired_evaluations_page(request: Request) -> Any:
+            data = self._load_paired_evaluation()
+            return self.templates.TemplateResponse(request, "paired_evaluations.html", {
+                "has_data": data is not None,
+                "data": data.get("summary", {}) if data else {},
+            })
+
+        @self.app.get("/promotions", response_class=HTMLResponse)
+        async def promotions_page(request: Request) -> Any:
+            data = self._load_promotions()
+            return self.templates.TemplateResponse(request, "promotions.html", {
+                "has_data": data is not None,
+                "data": data or {},
+            })
+
+        @self.app.get("/evidence-cards", response_class=HTMLResponse)
+        async def evidence_cards_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "evidence_cards.html", {
+                "cards": self._load_evidence_cards(),
+            })
+
+        @self.app.get("/registry", response_class=HTMLResponse)
+        async def registry_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "registry.html", {
+                "items": self._load_registry(),
+            })
+
+        @self.app.get("/blocked-external", response_class=HTMLResponse)
+        async def blocked_external_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "blocked_external.html", {
+                "blocked": self._load_blocked_external(),
+            })
+
+        @self.app.get("/demos", response_class=HTMLResponse)
+        async def demos_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "demos.html", {})
 
         @self.app.get("/memory", response_class=HTMLResponse)
         async def memory_page(request: Request) -> Any:
@@ -769,7 +1097,13 @@ class DashboardApp:
             return None
         try:
             data = json.loads(p.read_text())
-            per_task = data.get("per_task", {})
+            # Top-level keys are task IDs; metadata keys (tasks, seeds, timestamp)
+            # are not task summaries.
+            per_task = {
+                k: v
+                for k, v in data.items()
+                if isinstance(v, dict) and "valid_rate" in v
+            }
             any_valid = any(
                 (t.get("valid_rate") or 0.0) >= 1.0 for t in per_task.values()
             )
@@ -795,6 +1129,206 @@ class DashboardApp:
         except Exception:
             return None
 
+    def _load_large_yaw_intervention(self) -> dict[str, Any] | None:
+        """Load large-yaw targeted intervention ablation aggregate."""
+        p = self._resolve_data_v17_path("ablations/large_yaw_intervention/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            per_condition = data.get("per_condition_target", {})
+            verdict = self._compute_large_yaw_intervention_verdict(per_condition)
+            return {
+                "per_condition": per_condition,
+                "target_yaws": data.get("target_yaws", []),
+                "conditions": data.get("conditions", []),
+                "verdict": verdict,
+                "_source_path": str(p),
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _compute_large_yaw_intervention_verdict(
+        per_condition: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compare table_push_align to baseline on each target yaw.
+
+        Minimum pass criterion: at least one target yaw shows >=20% relative
+        improvement in orientation_achieved_rate versus baseline.
+        """
+        baseline_yaws: dict[float, float] = {}
+        table_yaws: dict[float, float] = {}
+        for key, summary in per_condition.items():
+            cond = summary.get("condition", "")
+            yaw = float(summary.get("target_yaw", 0.0))
+            rate = float(summary.get("orientation_achieved_rate", 0.0))
+            if cond == "baseline":
+                baseline_yaws[yaw] = rate
+            elif cond in ("table_push_align", "table_push_align_tuned"):
+                table_yaws[yaw] = max(table_yaws.get(yaw, 0.0), rate)
+
+        per_yaw: dict[str, Any] = {}
+        any_pass = False
+        for yaw in sorted(set(baseline_yaws) | set(table_yaws)):
+            base_rate = baseline_yaws.get(yaw, 0.0)
+            table_rate = table_yaws.get(yaw, 0.0)
+            if base_rate > 0:
+                rel_improvement = (table_rate - base_rate) / base_rate
+            else:
+                rel_improvement = float("inf") if table_rate > 0 else 0.0
+            passed = rel_improvement >= 0.20
+            any_pass = any_pass or passed
+            per_yaw[f"{yaw:.4f}"] = {
+                "baseline_rate": base_rate,
+                "table_rate": table_rate,
+                "relative_improvement": rel_improvement,
+                "passed": passed,
+            }
+
+        return {
+            "status": "pass" if any_pass else "reject",
+            "message": (
+                "table_push_align meets the minimum ≥20% relative improvement criterion on at least one target yaw."
+                if any_pass
+                else "Neither table_push_align nor the earlier interventions improved orientation_achieved_rate by ≥20% relative on π/2 or 2π/3. Large-yaw slip remains unresolved in the open-loop state-machine space."
+            ),
+            "per_yaw": per_yaw,
+        }
+
+    def _load_official_v18(self) -> dict[str, Any] | None:
+        """Load official benchmark trajectory for the v1.8 dashboard view."""
+        old_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v16/arena_real/dex_cube_goal_pose_100_seed_v16/aggregate_summary.json")
+        post_reach_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v17/official/dex_cube_goal_pose_100_seed_post_reachability/aggregate_summary.json")
+        seed24_fix_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v18/official/dex_cube_100_seed_seed24_fix_v3/aggregate_summary.json")
+
+        old_sr: float | None = None
+        if old_path.exists():
+            try:
+                old_sr = float(json.loads(old_path.read_text()).get("overall_success_rate", 0.82))
+            except Exception:
+                pass
+
+        post_sr: float | None = None
+        if post_reach_path.exists():
+            try:
+                post_sr = float(json.loads(post_reach_path.read_text()).get("overall_success_rate"))
+            except Exception:
+                pass
+
+        seed24_sr: float | None = None
+        if seed24_fix_path.exists():
+            try:
+                seed24_sr = float(json.loads(seed24_fix_path.read_text()).get("overall_success_rate"))
+            except Exception:
+                pass
+
+        if old_sr is None and post_sr is None and seed24_sr is None:
+            return None
+        return {
+            "old_success_rate": old_sr or 0.82,
+            "post_reachability_success_rate": post_sr,
+            "seed24_fix_success_rate": seed24_sr,
+            "seed24_fix_path": str(seed24_fix_path) if seed24_fix_path.exists() else None,
+            "post_reachability_path": str(post_reach_path) if post_reach_path.exists() else None,
+        }
+
+    def _load_valid_ood_validity(self) -> dict[str, Any] | None:
+        """Load valid OOD cube validity audit aggregate."""
+        p = self._resolve_data_v18_path("diagnostics/valid_ood_cube_validity_audit/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            per_task = {
+                k: v
+                for k, v in data.items()
+                if isinstance(v, dict) and "valid_rate" in v
+            }
+            any_valid = any((t.get("valid_rate") or 0.0) >= 1.0 for t in per_task.values())
+            return {
+                "per_task": per_task,
+                "any_valid": any_valid,
+                "_source_path": str(p),
+            }
+        except Exception:
+            return None
+
+    def _load_valid_ood_matrix(self) -> dict[str, Any] | None:
+        """Load valid OOD cube adaptation matrix aggregate."""
+        p = self._resolve_data_v18_path("ablations/valid_ood_cube_matrix/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            data["_source_path"] = str(p)
+            return data
+        except Exception:
+            return None
+
+    def _load_slip_monitor_validation(self) -> dict[str, Any] | None:
+        """Load slip monitor validation aggregate."""
+        p = self._resolve_data_v18_path("diagnostics/slip_monitor_validation/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            data["_source_path"] = str(p)
+            return data
+        except Exception:
+            return None
+
+    def _load_arena_issue_tracker_text(self) -> str | None:
+        """Load the Arena issue tracker markdown for the external blockers view."""
+        p = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/reports/ARENA_ISSUE_TRACKER.md")
+        if not p.exists():
+            return None
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def _load_slip_recovery_ablation(self) -> dict[str, Any] | None:
+        """Load slip-aware recovery ablation aggregate.
+
+        Prefer the final serial run; fall back to the pilot or any gpu subdir.
+        """
+        for p in (
+            self._resolve_data_v18_path("ablations/slip_aware_recovery/aggregate_summary.json"),
+            self._resolve_data_v18_path("ablations/slip_aware_recovery_pilot/aggregate_summary.json"),
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                # If this is a per-gpu split without a merged aggregate, recurse.
+                if "per_condition_target" not in data:
+                    gpu_dirs = sorted(d for d in p.parent.iterdir() if d.is_dir() and d.name.startswith("gpu"))
+                    if gpu_dirs:
+                        merged: dict[str, Any] = {"per_condition_target": {}}
+                        for gpu_dir in gpu_dirs:
+                            gpu_data = json.loads((gpu_dir / "aggregate_summary.json").read_text())
+                            merged["per_condition_target"].update(gpu_data.get("per_condition_target", {}))
+                            for key in ("target_yaws", "conditions", "seeds", "task", "base_policy"):
+                                if gpu_data.get(key) is not None:
+                                    merged[key] = gpu_data[key]
+                        data = merged
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                continue
+        return None
+
+    def _resolve_data_v18_path(self, relative_path: str) -> Path | None:
+        """Resolve a v1.8 data path, preferring the canonical project location."""
+        canonical = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v18") / relative_path
+        if canonical.exists():
+            return canonical
+        fallback = self.data_dir.parent / "data_v18" / relative_path
+        if fallback.exists():
+            return fallback
+        return None
+
     def _resolve_data_v17_path(self, relative_path: str) -> Path | None:
         """Resolve a v1.7 data path, preferring the canonical project location."""
         canonical = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v17") / relative_path
@@ -804,6 +1338,353 @@ class DashboardApp:
         if fallback.exists():
             return fallback
         return None
+
+    def _resolve_data_v19_path(self, relative_path: str) -> Path | None:
+        """Resolve a v1.9 data path, preferring the canonical project location."""
+        canonical = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v19") / relative_path
+        if canonical.exists():
+            return canonical
+        fallback = self.data_dir.parent / "data_v19" / relative_path
+        if fallback.exists():
+            return fallback
+        return None
+
+    def _load_official_v19(self) -> dict[str, Any] | None:
+        """Load v1.9 official baseline + seed24 micro-recovery gate status."""
+        p = self._resolve_data_v19_path("diagnostics/micro_recovery_trigger_audit_gated_v2_full_rerun/aggregate_summary.json")
+        if p is None or not p.exists():
+            p = self._resolve_data_v19_path("diagnostics/micro_recovery_trigger_audit_gated_v2/aggregate_summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            return {
+                "success_rate": float(data.get("overall_success_rate", 0.0)),
+                "trigger_rate": float(data.get("trigger_rate", 0.0)),
+                "gate_success": float(data.get("gate_success", 0.99)),
+                "gate_trigger": float(data.get("gate_trigger", 0.05)),
+                "num_episodes": data.get("num_episodes"),
+                "_source_path": str(p),
+            }
+        except Exception:
+            return None
+
+    def _load_contact_signal_trace(self) -> dict[str, Any] | None:
+        """Find any trace.jsonl under data_v19/diagnostics/ with contact_state records."""
+        base = self._resolve_data_v19_path("diagnostics")
+        if base is None or not base.exists():
+            return None
+        try:
+            for path in sorted(base.rglob("trace.jsonl")):
+                records: list[dict[str, Any]] = []
+                with path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            rec = json.loads(line)
+                            if "contact_state" in rec or "contact_confidence" in rec:
+                                records.append(rec)
+                        except Exception:
+                            continue
+                if records:
+                    timeline = [
+                        {
+                            "step": i,
+                            "contact_state": rec.get("contact_state", "unknown"),
+                            "contact_confidence": rec.get("contact_confidence", 0.0),
+                            "notes": rec.get("notes", ""),
+                        }
+                        for i, rec in enumerate(records)
+                    ]
+                    return {
+                        "trace": records,
+                        "timeline": timeline,
+                        "num_steps": len(records),
+                        "_source_path": str(path),
+                    }
+        except Exception:
+            pass
+        return None
+
+    def _load_residual_policy_stats(self) -> dict[str, Any] | None:
+        """Load residual policy statistics from metadata.yaml and residual_stats.json."""
+        metadata_path = self._resolve_data_v19_path("datasets/residual_learning/metadata.yaml")
+        stats_path = self._resolve_data_v19_path("ablations/residual_policy_pilot/residual_stats.json")
+        if stats_path is None or not stats_path.exists():
+            # Search for any residual_stats.json in the residual_policy_pilot dir
+            pilot_dir = self._resolve_data_v19_path("ablations/residual_policy_pilot")
+            if pilot_dir is not None and pilot_dir.exists():
+                candidates = sorted(pilot_dir.rglob("residual_stats.json"))
+                if candidates:
+                    stats_path = candidates[0]
+        if stats_path is None or not stats_path.exists():
+            return None
+        try:
+            stats = json.loads(stats_path.read_text())
+            result = {
+                "trigger_rate": float(stats.get("trigger_rate", 0.0)),
+                "clamp_rate": float(stats.get("clamp_rate", 0.0)),
+                "success_frames": int(stats.get("success_frames", 0)),
+                "failure_frames": int(stats.get("failure_frames", 0)),
+                "total_frames": int(stats.get("total_frames", 0)),
+                "stats_path": str(stats_path),
+                "metadata_path": str(metadata_path) if metadata_path and metadata_path.exists() else None,
+            }
+            return result
+        except Exception:
+            return None
+
+    def _load_valid_ood_subtasks(self) -> dict[str, Any] | None:
+        """Load valid OOD subtask decomposition summary."""
+        p = self._resolve_data_v19_path("diagnostics/valid_ood_subtask_decomposition/summary.json")
+        if p is None or not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+            data["_source_path"] = str(p)
+            return data
+        except Exception:
+            return None
+
+    def _load_fth_v33(self) -> dict[str, Any] | None:
+        """Load FailureToHint v3.3 route distribution."""
+        p = self._resolve_data_v19_path("evolution/fth_v33_route_distribution.json")
+        if p is not None and p.exists():
+            try:
+                data = json.loads(p.read_text())
+                routes = data.get("routes", {})
+                return {
+                    "routes": routes,
+                    "total": sum(routes.values()) if routes else 0,
+                    "_source_path": str(p),
+                }
+            except Exception:
+                pass
+        # Fallback: parse YAML config to count route types
+        config_path = Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/configs/skills/failure_signature_to_hint_rules_v33.yaml")
+        if not config_path.exists():
+            config_path = self.data_dir.parent / "configs" / "skills" / "failure_signature_to_hint_rules_v33.yaml"
+        if not config_path.exists():
+            return None
+        try:
+            import yaml
+            config = yaml.safe_load(config_path.read_text())
+            routes: dict[str, int] = {}
+            for rule in config.get("rules", []):
+                route_type = rule.get("route_type", "unknown")
+                routes[route_type] = routes.get(route_type, 0) + 1
+            return {
+                "routes": routes,
+                "total": sum(routes.values()) if routes else 0,
+                "_source_path": str(config_path),
+            }
+        except Exception:
+            return None
+
+    def _load_paired_evaluation(self) -> dict[str, Any] | None:
+        """Load paired no-regression evaluation summary for seed24 micro-recovery."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/paired/official_seed24_micro_recovery_0_199/paired_summary.json"),
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/paired/official_seed24_micro_recovery_0_4_real/paired_summary.json"),
+            self.data_dir.parent / "data_v20" / "paired" / "official_seed24_micro_recovery_0_199" / "paired_summary.json",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                continue
+        return None
+
+    def _load_contact_signal_v2(self) -> dict[str, Any] | None:
+        """Load ContactSignal reliability audit coverage."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/diagnostics/contact_signal_reliability_audit_from_v19_v2/aggregate_summary.json"),
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/diagnostics/contact_signal_reliability_audit/aggregate_summary.json"),
+            self.data_dir.parent / "data_v20" / "diagnostics" / "contact_signal_reliability_audit" / "aggregate_summary.json",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                coverage = {
+                    phase: float(info.get("coverage_rate", 0.0) or 0.0)
+                    for phase, info in data.get("phases", {}).items()
+                }
+                return {
+                    "coverage": coverage,
+                    "overall_coverage_rate": float(data.get("overall_coverage_rate", 0.0) or 0.0),
+                    "_source_path": str(p),
+                }
+            except Exception:
+                continue
+        return None
+
+    def _load_learned_trigger(self) -> dict[str, Any] | None:
+        """Load learned trigger model evaluation metrics."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/models/trigger_model/evaluation.json"),
+            self.data_dir.parent / "data_v20" / "models" / "trigger_model" / "evaluation.json",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                continue
+        return None
+
+    def _load_residual_policy_v2(self) -> dict[str, Any] | None:
+        """Load bounded residual policy v2 safety statistics."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/ablations/learned_residual_pilot/residual_stats.json"),
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/ablations/bounded_residual_policy/residual_stats.json"),
+            self.data_dir.parent / "data_v20" / "ablations" / "learned_residual_pilot" / "residual_stats.json",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                continue
+        return None
+
+    def _load_valid_ood_medium(self) -> dict[str, Any] | None:
+        """Load valid OOD medium-task selection results."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/diagnostics/valid_ood_medium_task_mining/selected_tasks.yaml"),
+            self.data_dir.parent / "data_v20" / "diagnostics" / "valid_ood_medium_task_mining" / "selected_tasks.yaml",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                import yaml
+                selected = yaml.safe_load(p.read_text()) or {}
+                rejected_path = p.parent / "rejected_tasks.yaml"
+                rejected = {}
+                if rejected_path.exists():
+                    rejected = yaml.safe_load(rejected_path.read_text()) or {}
+                return {
+                    "selected": selected,
+                    "rejected": rejected,
+                    "_source_path": str(p),
+                }
+            except Exception:
+                continue
+        return None
+
+    def _load_fth_v34(self) -> dict[str, Any] | None:
+        """Load FailureToHint v3.4 evidence status list."""
+        for p in (
+            Path("/code/rosclaw/rosclaw_darwin/rosclaw-darwin/data_v20/evolution/fth_v34_evidence_status.json"),
+            self.data_dir.parent / "data_v20" / "evolution" / "fth_v34_evidence_status.json",
+        ):
+            if p is None or not p.exists():
+                continue
+            try:
+                data = json.loads(p.read_text())
+                data["_source_path"] = str(p)
+                return data
+            except Exception:
+                continue
+        return None
+
+    def _load_evidence_cards(self) -> list[dict[str, Any]]:
+        """Load generated evidence cards from cards/ directory."""
+        cards: list[dict[str, Any]] = []
+        cards_dir = Path.cwd() / "cards"
+        if not cards_dir.exists():
+            cards_dir = self.data_dir.parent / "cards"
+        if not cards_dir.exists():
+            return cards
+        for f in sorted(cards_dir.glob("*.card.yaml")):
+            try:
+                import yaml
+                cards.append(yaml.safe_load(f.read_text()))
+            except Exception:
+                continue
+        return cards
+
+    def _load_registry(self) -> list[dict[str, Any]]:
+        """Load promotion registry items."""
+        from rosclaw_darwin.registry import PromotionRegistry
+
+        registry_dir = self.data_dir / "darwin" / "registry"
+        if not registry_dir.exists():
+            registry_dir = Path("data/darwin/registry")
+        try:
+            reg = PromotionRegistry(registry_dir)
+            return [item.model_dump(mode="json") for item in reg.list_items()]
+        except Exception:
+            return []
+
+    def _load_blocked_external(self) -> list[dict[str, Any]]:
+        """Return blocked-external items from evidence cards and registry."""
+        blocked: list[dict[str, Any]] = [
+            {
+                "name": "procedural_fallback_invalid_environment",
+                "reason": "Procedural cube fallback has disabled collision and invalid bbox.",
+                "next_step": "Escalate to Arena; use valid OOD cube for OOD evaluation.",
+            },
+            {
+                "name": "large_yaw_torsional_slip",
+                "reason": "Large-yaw torsional slip is outside current sensor/control capabilities.",
+                "next_step": "Requires contact/force sensing or hardware change.",
+            },
+        ]
+        for card in self._load_evidence_cards():
+            status = card.get("promotion_decision", {}).get("status")
+            if status == "blocked_external":
+                blocked.append({
+                    "name": card.get("name", "unknown"),
+                    "reason": card.get("summary", ""),
+                    "next_step": "See evidence card.",
+                })
+        return blocked
+
+    def _load_promotions(self) -> dict[str, Any] | None:
+        """Load latest promotion decision."""
+        promo_dir = self.data_dir / "darwin" / "promotions"
+        if not promo_dir.exists():
+            promo_dir = Path("data/darwin/promotions")
+        if not promo_dir.exists():
+            return None
+        files = sorted(promo_dir.glob("*_promotion_decision.json"))
+        if not files:
+            return None
+        try:
+            return json.loads(files[-1].read_text())
+        except Exception:
+            return None
+
+    def _load_validity_summary(self) -> dict[str, Any] | None:
+        """Aggregate task validity reports."""
+        validity_dir = self.data_dir / "darwin" / "validity"
+        if not validity_dir.exists():
+            validity_dir = Path("data/darwin/validity")
+        if not validity_dir.exists():
+            return None
+        per_task: dict[str, Any] = {}
+        for f in validity_dir.glob("**/task_validity.json"):
+            try:
+                data = json.loads(f.read_text())
+                per_task[data.get("task_id", f.stem)] = {
+                    "scope": data.get("benchmark_scope"),
+                    "status": data.get("validity_status"),
+                    "official_asset": data.get("official_asset"),
+                }
+            except Exception:
+                continue
+        if not per_task:
+            return None
+        return {"per_task": per_task}
 
     def run(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         import uvicorn

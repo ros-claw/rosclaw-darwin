@@ -10,6 +10,8 @@ import math
 import tempfile
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from rosclaw_darwin.dashboard.app import DashboardApp
 from rosclaw_darwin.evaluation.object_validity import ObjectValidityReport, check_object_validity
 from rosclaw_darwin.evaluation.yaw_coupling import classify_large_yaw_failure
@@ -118,3 +120,171 @@ def test_large_yaw_failure_classification_categories():
     diag = classify_large_yaw_failure(trace)
     assert diag["category"] in {"torsional_slip", "post_lift_slip"}
     assert diag["torsional_slip_detected"]
+
+
+def test_dashboard_procedural_validity_loader():
+    """Dashboard _load_procedural_validity returns the expected shape and ignores metadata keys."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_dir = Path(tmp)
+        data_dir = project_dir / "data"
+        data_dir.mkdir(parents=True)
+        audit_dir = project_dir / "data_v17" / "diagnostics" / "procedural_object_validity_audit"
+        audit_dir.mkdir(parents=True)
+        aggregate = {
+            "goal_pose_procedural_cube_ood": {
+                "valid_rate": 0.0,
+                "valid_count": 0,
+                "total_reports": 110,
+                "error_distribution": {"invalid_bbox": 110, "collision_disabled": 110},
+                "object_z_range": [0.047, 0.200],
+                "bbox_valid_rate": 0.0,
+                "rigid_body_enabled_rate": 1.0,
+                "collision_enabled_rate": 0.0,
+                "object_index_consistency_rate": 1.0,
+            },
+            "tasks": ["goal_pose_procedural_cube_ood"],
+            "seeds": [0],
+            "timestamp": "2026-06-20T02:05:44Z",
+        }
+        (audit_dir / "aggregate_summary.json").write_text(json.dumps(aggregate))
+
+        app = DashboardApp(str(data_dir))
+        data = app._load_procedural_validity()
+        assert data is not None
+        assert "per_task" in data
+        assert "goal_pose_procedural_cube_ood" in data["per_task"]
+        assert data["any_valid"] is False
+
+
+def test_dashboard_large_yaw_intervention_loader():
+    """Dashboard _load_large_yaw_intervention returns the expected shape."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_dir = Path(tmp)
+        data_dir = project_dir / "data"
+        data_dir.mkdir(parents=True)
+        ablation_dir = project_dir / "data_v17" / "ablations" / "large_yaw_intervention"
+        ablation_dir.mkdir(parents=True)
+        aggregate = {
+            "per_condition_target": {
+                "baseline__yaw_1.5708": {
+                    "condition": "baseline",
+                    "target_yaw": 1.5708,
+                    "orientation_achieved_rate": 0.1,
+                }
+            },
+            "target_yaws": [1.5708],
+            "conditions": ["baseline"],
+            "timestamp": "2026-06-20T07:16:03Z",
+        }
+        (ablation_dir / "aggregate_summary.json").write_text(json.dumps(aggregate))
+
+        app = DashboardApp(str(data_dir))
+        data = app._load_large_yaw_intervention()
+        assert data is not None
+        assert "per_condition" in data
+        assert "baseline__yaw_1.5708" in data["per_condition"]
+        assert "verdict" in data
+        assert data["verdict"]["status"] in ("pass", "reject")
+        assert "per_yaw" in data["verdict"] or "message" in data["verdict"]
+
+
+def test_large_yaw_intervention_aggregate_schema_includes_table_push_align():
+    """The intervention aggregate must support the table_push_align condition."""
+    aggregate = {
+        "per_condition_target": {
+            "table_push_align__yaw_1.5708": {
+                "condition": "table_push_align",
+                "target_yaw": 1.5708,
+                "count": 20,
+                "valid_count": 20,
+                "env_success_rate": 0.0,
+                "lifted_rate": 1.0,
+                "orientation_achieved_rate": 0.3,
+                "category_distribution": {"torsional_slip": 12, "success": 6, "eef_yaw_failure": 2},
+                "mean_object_yaw_final_error": 0.9,
+                "mean_yaw_coupling_score": 0.75,
+            }
+        },
+        "target_yaws": [1.5708],
+        "conditions": ["table_push_align"],
+        "timestamp": "2026-06-20T07:16:03Z",
+    }
+    required = {
+        "condition",
+        "target_yaw",
+        "count",
+        "valid_count",
+        "lifted_rate",
+        "orientation_achieved_rate",
+        "category_distribution",
+        "mean_yaw_coupling_score",
+    }
+    assert required.issubset(aggregate["per_condition_target"]["table_push_align__yaw_1.5708"])
+    assert aggregate["per_condition_target"]["table_push_align__yaw_1.5708"]["condition"] == "table_push_align"
+    """The /large-yaw-intervention dashboard route renders with real aggregate shape."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_dir = Path(tmp)
+        data_dir = project_dir / "data"
+        data_dir.mkdir(parents=True)
+        ablation_dir = project_dir / "data_v17" / "ablations" / "large_yaw_intervention"
+        ablation_dir.mkdir(parents=True)
+        aggregate = {
+            "per_condition_target": {
+                "baseline__yaw_1.5708": {
+                    "condition": "baseline",
+                    "target_yaw": 1.5708,
+                    "count": 20,
+                    "env_success_rate": 1.0,
+                    "lifted_rate": 1.0,
+                    "orientation_achieved_rate": 0.1,
+                    "mean_yaw_coupling_score": 0.75,
+                    "category_distribution": {"torsional_slip": 9, "success": 2, "eef_yaw_failure": 9},
+                }
+            },
+            "target_yaws": [1.5708],
+            "conditions": ["baseline"],
+            "timestamp": "2026-06-20T07:16:03Z",
+        }
+        (ablation_dir / "aggregate_summary.json").write_text(json.dumps(aggregate))
+
+        app = DashboardApp(str(data_dir))
+        client = TestClient(app.app)
+        response = client.get("/large-yaw-intervention")
+        assert response.status_code == 200
+        assert "Large-Yaw Targeted Intervention Ablation" in response.text
+        assert "baseline" in response.text
+        assert "verdict" in response.text.lower() or "rejected" in response.text.lower() or "criterion" in response.text.lower()
+
+
+def test_dashboard_procedural_validity_route_renders():
+    """The /procedural-validity dashboard route renders and shows blocked warning."""
+    with tempfile.TemporaryDirectory() as tmp:
+        project_dir = Path(tmp)
+        data_dir = project_dir / "data"
+        data_dir.mkdir(parents=True)
+        audit_dir = project_dir / "data_v17" / "diagnostics" / "procedural_object_validity_audit"
+        audit_dir.mkdir(parents=True)
+        aggregate = {
+            "goal_pose_procedural_cube_ood": {
+                "valid_rate": 0.0,
+                "valid_count": 0,
+                "total_reports": 110,
+                "error_distribution": {"invalid_bbox": 110, "collision_disabled": 110},
+                "object_z_range": [0.047, 0.200],
+                "bbox_valid_rate": 0.0,
+                "rigid_body_enabled_rate": 1.0,
+                "collision_enabled_rate": 0.0,
+                "object_index_consistency_rate": 1.0,
+            },
+            "tasks": ["goal_pose_procedural_cube_ood"],
+            "seeds": [0],
+            "timestamp": "2026-06-20T02:05:44Z",
+        }
+        (audit_dir / "aggregate_summary.json").write_text(json.dumps(aggregate))
+
+        app = DashboardApp(str(data_dir))
+        client = TestClient(app.app)
+        response = client.get("/procedural-validity")
+        assert response.status_code == 200
+        assert "Procedural Object Validity Audit" in response.text
+        assert "OOD adaptation is blocked" in response.text

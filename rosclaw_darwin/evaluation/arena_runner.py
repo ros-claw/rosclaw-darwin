@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -131,6 +132,59 @@ class ArenaRunner:
             },
         )
 
+    @staticmethod
+    def _detect_infrastructure_failure(stderr: str) -> tuple[bool, list[str]]:
+        """Return True if stderr contains a non-policy infrastructure error.
+
+        These signals indicate Docker / Isaac Sim / HDF5 / filesystem problems
+        rather than policy behaviour, so the run must not be counted as a policy
+        outcome.
+        """
+        if not stderr:
+            return False, []
+        patterns = {
+            "blocking_io_error": re.compile(r"BlockingIOError", re.IGNORECASE),
+            "python_traceback": re.compile(r"Traceback \(most recent call last\)"),
+            "hdf5_lock_error": re.compile(r"unable to lock file", re.IGNORECASE),
+            "h5py_error": re.compile(r"\bh5py\.", re.IGNORECASE),
+            "cuda_oom": re.compile(r"CUDA out of memory", re.IGNORECASE),
+            "no_space_left": re.compile(r"No space left on device", re.IGNORECASE),
+        }
+        signals = [name for name, pat in patterns.items() if pat.search(stderr)]
+        return bool(signals), signals
+
+    @staticmethod
+    def _pick_gpu_device() -> str:
+        """Select the GPU with the most free memory, falling back to 'all'."""
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,memory.free",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return "all"
+            best = "all"
+            best_free = -1.0
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",") if p.strip()]
+                if len(parts) != 2:
+                    continue
+                idx, free = parts
+                free_mb = float(free)
+                if free_mb > best_free:
+                    best_free = free_mb
+                    best = idx
+            return best
+        except Exception:
+            return "all"
+
     def _run_docker(
         self,
         job: dict[str, Any],
@@ -165,12 +219,15 @@ class ArenaRunner:
 
             # Build docker run command
             site_packages = "/isaac-sim/kit/python/lib/python3.12/site-packages"
+            gpu_arg = os.environ.get("ROSCLAW_ARENA_GPU_DEVICES", self._pick_gpu_device())
             cmd = [
-                "docker", "run", "--rm", "--gpus", "all",
+                "docker", "run", "--rm", "--gpus", f"device={gpu_arg}" if gpu_arg != "all" else "all",
                 "-e", "ACCEPT_EULA=Y",
                 "-e", "DISPLAY=",
                 "-e", "OPENBLAS_NUM_THREADS=1",
                 "-e", "OMP_NUM_THREADS=1",
+                "-e", "HDF5_USE_FILE_LOCKING=FALSE",
+                "-e", "PYTHONDONTWRITEBYTECODE=1",
                 "-e", "ROSCLAW_TRACE_DIR=/workspace/data/traces",
             ]
             # Forward seed/placement_seed from the job into the container so the
@@ -179,6 +236,57 @@ class ArenaRunner:
                 cmd.extend(["-e", f"ROSCLAW_ARENA_SEED={job['seed']}"])
             if job.get("placement_seed") is not None:
                 cmd.extend(["-e", f"ROSCLAW_ARENA_PLACEMENT_SEED={job['placement_seed']}"])
+
+            # Mount optional route-classifier model so the container can load it.
+            policy_cfg = job.get("policy_config_dict") or {}
+            route_classifier_path = policy_cfg.get("route_classifier_path")
+            if route_classifier_path:
+                rc_host = Path(route_classifier_path).resolve()
+                if rc_host.exists():
+                    cmd.extend(["-v", f"{rc_host}:{rc_host}"])
+                else:
+                    logger.warning(
+                        "route_classifier_path references a missing file: %s", rc_host
+                    )
+
+            # Mount optional learned residual / trigger model weights so the
+            # container-side heuristic policy can load them at the same
+            # host-absolute paths used in the YAML config.
+            for model_key in ("residual_policy_path", "trigger_model_path"):
+                model_path = policy_cfg.get(model_key)
+                if model_path:
+                    model_host = Path(model_path).resolve()
+                    if model_host.exists():
+                        cmd.extend(["-v", f"{model_host}:{model_host}"])
+                    else:
+                        logger.warning(
+                            "%s references a missing file: %s", model_key, model_host
+                        )
+
+            # If the job uses a learned residual policy, the container needs the
+            # host learning modules (rosclaw_darwin.learning.*) because the
+            # rosclaw_darwin package is not installed inside Docker.  Build a
+            # temporary package overlay and mount it into /workspace/data so
+            # run_eval.py's sys.path insertion makes the imports resolve.
+            if policy_cfg.get("residual_policy") not in (None, "none", ""):
+                overlay_root = tmp_path / "rosclaw_darwin"
+                overlay_learning = overlay_root / "learning"
+                overlay_learning.mkdir(parents=True, exist_ok=True)
+                (overlay_root / "__init__.py").write_text("")
+                (overlay_learning / "__init__.py").write_text("")
+                learning_src = Path(__file__).resolve().parent.parent / "learning"
+                for module_name in (
+                    "residual_policy.py",
+                    "bounded_residual_policy.py",
+                    "trigger_model.py",
+                ):
+                    src = learning_src / module_name
+                    if src.exists():
+                        (overlay_learning / module_name).write_bytes(src.read_bytes())
+                    else:
+                        logger.warning("Learning overlay missing source: %s", src)
+                cmd.extend(["-v", f"{overlay_root}:/workspace/data/rosclaw_darwin"])
+
             cmd.extend([
                 "--entrypoint", "",
                 # Mount eval config
@@ -214,6 +322,9 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
                 # Mount heuristic policy (can be referenced by full module path)
                 "-v", f"{DEPS_DIR / 'heuristic_policy.py'}:/workspace/data/heuristic_policy.py",
+                # Mount small learned route classifier so the heuristic policy can
+                # load it locally inside the container (rosclaw_darwin is not installed).
+                "-v", f"{DEPS_DIR / 'route_classifier.py'}:/workspace/data/route_classifier.py",
                 # Mount object validity audit policy
                 "-v", f"{DEPS_DIR / 'object_validity_audit_policy.py'}:/workspace/data/object_validity_audit_policy.py",
                 # Mount patched lift environment (uses procedural_table instead of table)
@@ -290,14 +401,21 @@ class ArenaRunner:
                 else:
                     status = "completed"
 
-            # Collect full stderr (up to 50KB) into metadata for debugging
+            # Treat container-side infrastructure errors (HDF5 locking, Python
+            # tracebacks, PhysX stage failures, etc.) as runner failures even if
+            # the Docker process exited 0.  These are not policy outcomes.
             stderr_full = proc.stderr or ""
             if _stderr_path.exists():
                 try:
                     stderr_full = _stderr_path.read_text()
                 except Exception:
                     pass
-            # TemporaryDirectory will delete tmpdir on exit; copy stderr to persistent location if out_dir available
+            infra_failure, infra_signals = self._detect_infrastructure_failure(stderr_full)
+            if infra_failure:
+                status = "failed"
+
+            # TemporaryDirectory will delete tmpdir on exit; copy stderr to a
+            # persistent location if the caller supplied an output directory.
             _persist_stderr = None
             if job.get("_out_dir"):
                 _persist_stderr = Path(job["_out_dir"]) / f"{run_id}_stderr.log"
@@ -306,13 +424,15 @@ class ArenaRunner:
                 except Exception:
                     _persist_stderr = None
 
-            result_metadata = {
+            result_metadata: dict[str, Any] = {
                 "mode": "docker",
                 "return_code": proc.returncode,
                 "stdout_preview": proc.stdout[:2000],
                 "stderr_preview": proc.stderr[:2000],
                 "stderr_full": stderr_full[:50000],
                 "arena_metrics_output": arena_metadata,
+                "infrastructure_failure": infra_failure,
+                "infrastructure_signals": infra_signals,
             }
             # Attach progress / episode metadata if provided by the container.
             for key in ("episode_metrics", "failure_counts", "policy_metadata"):

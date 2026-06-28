@@ -39,10 +39,15 @@ except Exception:
     pass
 
 
-def _append_trace(step: dict[str, Any]) -> None:
-    """Append a scalar step record to the shared trace file."""
+def _append_trace(step: dict[str, Any], clear_on_step_zero: bool = True) -> None:
+    """Append a scalar step record to the shared trace file.
+
+    When ``clear_on_step_zero`` is ``False`` the trace is never truncated, which
+    allows a single Arena container to audit multiple episodes/seeds in one run.
+    """
     try:
-        mode = "w" if step.get("step") == 0 else "a"
+        truncate = step.get("step") == 0 and clear_on_step_zero
+        mode = "w" if truncate else "a"
         with open(_TRACE_PATH, mode, encoding="utf-8") as f:
             f.write(json.dumps(step) + "\n")
     except Exception as e:
@@ -67,6 +72,29 @@ def _quat_to_yaw(q: torch.Tensor) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+def _find_spawn_attr(obj: Any, attr_name: str) -> Any:
+    """Look for ``attr_name`` on ``obj.spawn``, ``obj.cfg``, and ``obj.cfg.spawn``.
+
+    IsaacLab scene objects expose the constructed object cfg via ``obj.cfg``; the
+    spawn primitives (CuboidCfg, etc.) live at ``obj.cfg.spawn``.  Some objects
+    also expose the final spawn config as ``obj.spawn``.  We check all three
+    locations so the audit can read collision/mass/friction/size for both USD
+    assets and procedural primitives.
+    """
+    for src in (getattr(obj, "spawn", None), getattr(obj, "cfg", None)):
+        if src is None:
+            continue
+        val = getattr(src, attr_name, None)
+        if val is not None:
+            return val
+        nested = getattr(src, "spawn", None)
+        if nested is not None:
+            val = getattr(nested, attr_name, None)
+            if val is not None:
+                return val
+    return None
+
+
 @dataclass
 class ObjectValidityAuditPolicyArgs:
     """Configuration for the audit policy."""
@@ -74,6 +102,7 @@ class ObjectValidityAuditPolicyArgs:
     audit_steps: int = 11
     table_z: float = 0.18
     object_name_hint: str | None = None
+    clear_trace_on_reset: bool = True
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "ObjectValidityAuditPolicyArgs":
@@ -81,6 +110,7 @@ class ObjectValidityAuditPolicyArgs:
             audit_steps=getattr(args, "audit_steps", 11),
             table_z=getattr(args, "table_z", 0.18),
             object_name_hint=getattr(args, "object_name_hint", None),
+            clear_trace_on_reset=getattr(args, "clear_trace_on_reset", True),
         )
 
 
@@ -96,6 +126,7 @@ class ObjectValidityAuditPolicy(PolicyBase):
         self._config = config
         self._object_name_hint = config.object_name_hint
         self._episode_idx = 0
+        self._clear_trace_on_reset = config.clear_trace_on_reset
         try:
             if os.path.exists(_TRACE_PATH):
                 os.remove(_TRACE_PATH)
@@ -169,31 +200,57 @@ class ObjectValidityAuditPolicy(PolicyBase):
 
         # Spawn / rigid body / collision configuration.
         try:
-            spawn = getattr(obj, "spawn", None)
-            cfg = getattr(obj, "cfg", None)
-            rigid_props = getattr(spawn, "rigid_props", None) or getattr(cfg, "rigid_props", None)
-            collision_props = getattr(spawn, "collision_props", None) or getattr(cfg, "collision_props", None)
+            rigid_props = _find_spawn_attr(obj, "rigid_props")
+            collision_props = _find_spawn_attr(obj, "collision_props")
+            mass_props = _find_spawn_attr(obj, "mass_props")
+            physics_material = _find_spawn_attr(obj, "physics_material")
 
-            rigid_enabled = bool(getattr(rigid_props, "disable_gravity", False) is False)
-            collision_enabled = collision_props is not None
+            # A rigid body is considered enabled if it either has explicit rigid
+            # props without gravity disabled, or has collision props (which only
+            # make sense on a rigid body).
+            rigid_enabled = False
+            if rigid_props is not None:
+                rigid_enabled = getattr(rigid_props, "disable_gravity", False) is not True
+            elif collision_props is not None:
+                rigid_enabled = True
             record["rigid_body_enabled"] = rigid_enabled
+
+            # Collision is enabled when a collision config exists and is not
+            # explicitly disabled.  ``collision_enabled=None`` is the default and
+            # means the USD default (enabled) will be used.
+            collision_enabled = False
+            if collision_props is not None:
+                collision_enabled = getattr(collision_props, "collision_enabled", None) is not False
             record["collision_enabled"] = collision_enabled
 
-            mass_props = getattr(spawn, "mass_props", None) or getattr(cfg, "mass_props", None)
             if mass_props is not None:
                 record["mass"] = float(getattr(mass_props, "mass", 0.0))
 
-            physics_material = getattr(spawn, "physics_material", None) or getattr(cfg, "physics_material", None)
             if physics_material is not None:
                 record["static_friction"] = float(getattr(physics_material, "static_friction", 0.0))
                 record["dynamic_friction"] = float(getattr(physics_material, "dynamic_friction", 0.0))
         except Exception as exc:
             record["spawn_props_error"] = str(exc)
 
-        # Bounding box.
+        # Bounding box.  Procedural primitives (CuboidCfg) carry their geometry
+        # via ``size`` on the spawn config; USD assets expose it via
+        # ``get_bounding_box``.  Prefer the explicit spawn size when present.
         try:
+            pos = [
+                record.get("object_x", 0.0),
+                record.get("object_y", 0.0),
+                record.get("object_z", 0.0),
+            ]
+            size = _find_spawn_attr(obj, "size")
             bbox = None
-            if hasattr(obj, "get_bounding_box"):
+            if size is not None:
+                extent = _as_tuple(size)
+                if len(extent) >= 3 and all(e > 0 for e in extent):
+                    record["bbox_extent"] = [float(extent[0]), float(extent[1]), float(extent[2])]
+                    half = [float(e) / 2.0 for e in extent]
+                    record["bbox_world_min"] = [pos[i] - half[i] for i in range(3)]
+                    record["bbox_world_max"] = [pos[i] + half[i] for i in range(3)]
+            elif hasattr(obj, "get_bounding_box"):
                 bbox = obj.get_bounding_box()
             if bbox is not None:
                 upper = _as_tuple(getattr(bbox, "upper", None) or [0.0, 0.0, 0.0])
@@ -230,9 +287,9 @@ class ObjectValidityAuditPolicy(PolicyBase):
         if step <= 10 or step % 10 == 0:
             try:
                 record = self._extract_audit_record(env, step)
-                _append_trace(record)
+                _append_trace(record, clear_on_step_zero=self._clear_trace_on_reset)
             except Exception as exc:
-                _append_trace({"step": step, "audit_error": str(exc)})
+                _append_trace({"step": step, "audit_error": str(exc)}, clear_on_step_zero=self._clear_trace_on_reset)
 
         # Neutral action: hold position, keep gripper open, do not disturb object.
         action = torch.zeros(env.action_space.shape, device=torch.device(env.unwrapped.device))
@@ -241,17 +298,31 @@ class ObjectValidityAuditPolicy(PolicyBase):
     def reset(self, env_ids: torch.Tensor | None = None) -> None:
         self._step = 0
         self._episode_idx += 1
-        try:
-            if os.path.exists(_TRACE_PATH):
-                os.remove(_TRACE_PATH)
-        except Exception:
-            pass
+        if self._clear_trace_on_reset:
+            try:
+                if os.path.exists(_TRACE_PATH):
+                    os.remove(_TRACE_PATH)
+            except Exception:
+                pass
 
     @staticmethod
     def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser.add_argument("--audit-steps", type=int, default=11)
         parser.add_argument("--table-z", type=float, default=0.18)
         parser.add_argument("--object-name-hint", type=str, default=None)
+        parser.add_argument(
+            "--clear-trace-on-reset",
+            dest="clear_trace_on_reset",
+            action="store_true",
+            default=True,
+            help="Remove the trace file on every environment reset (default).",
+        )
+        parser.add_argument(
+            "--no-clear-trace-on-reset",
+            dest="clear_trace_on_reset",
+            action="store_false",
+            help="Append trace records across episodes so multiple seeds can be audited in one container.",
+        )
         return parser
 
     @staticmethod

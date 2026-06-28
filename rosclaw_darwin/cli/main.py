@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from rosclaw_darwin.adapters.mock import MockAdapter
+from rosclaw_darwin.cli.darwin_app import darwin_app
 from rosclaw_darwin.dashboard.app import DashboardApp
 from rosclaw_darwin.evaluation.report import save_evolution_report, save_run_result
 from rosclaw_darwin.evolution.composer import TaskComposer
@@ -28,6 +29,7 @@ from rosclaw_darwin.tdl.validator import TaskValidator
 from rosclaw_darwin.utils.paths import ensure_dir
 
 app = typer.Typer(help="ROSClaw-Darwin: Evolutionary Embodied Intelligence Benchmark")
+app.add_typer(darwin_app, name="darwin")
 console = Console()
 
 

@@ -88,7 +88,7 @@ def test_select_hints_structural_overrides_and_strategy_switches():
             ),
         ]
     )
-    hints, overrides, matched, structural_overrides, strategy_switches = registry.select_hints(
+    hints, overrides, matched, structural_overrides, strategy_switches, _recovery_policy = registry.select_hints(
         ["weak_contact_no_lift"]
     )
     assert "enable_regrasp" in hints
@@ -102,7 +102,7 @@ def test_select_hints_structural_overrides_and_strategy_switches():
 
 def test_select_hints_dedup_and_overrides():
     registry = _make_registry()
-    hints, overrides, matched, structural_overrides, strategy_switches = registry.select_hints(["final_alignment_gap"])
+    hints, overrides, matched, structural_overrides, strategy_switches, _recovery_policy = registry.select_hints(["final_alignment_gap"])
     assert "precision_target_tracking" in hints
     # Duplicate hint from lower-precedence manual recipe is deduplicated.
     assert hints.count("precision_target_tracking") == 1
@@ -131,7 +131,7 @@ def test_conflict_resolution_prefers_grasp_stability():
             ),
         ]
     )
-    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap", "unstable_grasp"])
+    hints, _, _, _, _, _ = registry.select_hints(["final_alignment_gap", "unstable_grasp"])
     # unstable_grasp recipe has higher precedence, so its hints come first.
     assert "longer_squeeze" in hints
     # faster_approach is incompatible with stabilize_lift / longer_squeeze.
@@ -167,5 +167,5 @@ def test_validated_only_filter():
             ),
         ]
     )
-    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap"], validated_only=True)
+    hints, _, _, _, _, _ = registry.select_hints(["final_alignment_gap"], validated_only=True)
     assert hints == ["precision_target_tracking"]

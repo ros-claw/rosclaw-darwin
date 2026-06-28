@@ -3,19 +3,28 @@
 # Called dynamically by eval_runner via policy_type module path.
 
 import argparse
+import datetime
 import json
 import math
 import os
 import sys
 import types
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import gymnasium as gym
 import torch
 from gymnasium.spaces.dict import Dict as GymSpacesDict
 
 try:
+    from rosclaw_darwin.evaluation.contact_signal import (
+        ContactSignal,
+        ContactSignalProvider,
+    )
+    from rosclaw_darwin.evaluation.grip_quality import (
+        GripQualityMonitor,
+        GripQualityMonitorConfig,
+    )
     from rosclaw_darwin.evaluation.object_geometry import (
         AdaptedPolicyParams,
         ObjectGeometry,
@@ -25,6 +34,10 @@ try:
     )
     from rosclaw_darwin.evaluation.reachability import (
         ReachabilityRiskEstimator,
+    )
+    from rosclaw_darwin.evaluation.slip_monitor import (
+        SlipMonitor,
+        SlipMonitorConfig,
     )
 except Exception:
     # Container-side fallback: the host module is not mounted into the Docker
@@ -113,6 +126,596 @@ except Exception:
                 object_following_distance_threshold=round(following_threshold, 4),
                 align_max_delta=round(align_max_delta, 4),
             )
+
+    def _angle_diff(target: float, current: float) -> float:
+        diff = target - current
+        while diff > math.pi:
+            diff -= 2.0 * math.pi
+        while diff < -math.pi:
+            diff += 2.0 * math.pi
+        return diff
+
+    def _get(record: dict[str, Any], key: str) -> float | None:
+        val = record.get(key)
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except Exception:
+            return None
+
+    @dataclass
+    class SlipMonitorConfig:
+        torsional_slip_threshold: float = 0.3
+        yaw_error_increase_threshold: float = 0.2
+        position_drift_threshold: float = 0.02
+        vertical_drop_threshold: float = 0.005
+        eef_stability_threshold: float = 0.001
+        drop_height_threshold: float = 0.08
+        min_lift_height: float = 0.1
+        window_size: int = 10
+        min_event_steps: int = 5
+        event_score_threshold: float = 3.5
+        weights: dict[str, float] = field(default_factory=lambda: {
+            "torsional": 0.40,
+            "yaw_error": 0.30,
+            "pose_drift": 0.20,
+            "vertical": 0.10,
+        })
+
+    @dataclass(frozen=True)
+    class SlipSignal:
+        step: int
+        phase: str
+        slip_score: float
+        torsional_slip: bool
+        vertical_slip: bool
+        pose_drift: bool
+        drop: bool
+        no_slip: bool
+
+        @property
+        def any_slip(self) -> bool:
+            return self.torsional_slip or self.vertical_slip or self.pose_drift or self.drop
+
+    from collections import deque
+
+    class SlipMonitor:
+        def __init__(self, config: Optional["SlipMonitorConfig"] = None) -> None:
+            self.config = config or SlipMonitorConfig()
+            self._initial_object_z: float | None = None
+            self._recent_object_yaw_error: deque[float] = deque(maxlen=self.config.window_size)
+            self._recent_object_eef_dist: deque[float] = deque(maxlen=self.config.window_size)
+            self._recent_object_z: deque[float] = deque(maxlen=self.config.window_size)
+            self._recent_eef_pos: deque[tuple[float, float, float]] = deque(maxlen=self.config.window_size)
+
+        def reset(self) -> None:
+            """Clear all rolling buffers and the initial-object-z baseline."""
+            self._initial_object_z = None
+            self._recent_object_yaw_error.clear()
+            self._recent_object_eef_dist.clear()
+            self._recent_object_z.clear()
+            self._recent_eef_pos.clear()
+
+        def update(self, record: dict[str, Any]) -> "SlipSignal":
+            """Process a single new record and return its ``SlipSignal``."""
+            cfg = self.config
+
+            obj_yaw = _get(record, "object_yaw")
+            eef_yaw = _get(record, "eef_yaw")
+            target_yaw = _get(record, "target_yaw")
+            obj_z = _get(record, "object_z")
+            obj_x = _get(record, "object_x")
+            obj_y = _get(record, "object_y")
+            eef_x = _get(record, "eef_x")
+            eef_y = _get(record, "eef_y")
+            eef_z = _get(record, "eef_z")
+
+            if self._initial_object_z is None and obj_z is not None:
+                self._initial_object_z = obj_z
+
+            lifted = (
+                obj_z is not None
+                and self._initial_object_z is not None
+                and obj_z > self._initial_object_z + cfg.min_lift_height
+            )
+
+            torsional_score = 0.0
+            if obj_yaw is not None and eef_yaw is not None:
+                torsional_score = abs(_angle_diff(obj_yaw, eef_yaw))
+
+            yaw_error_inc_score = 0.0
+            if target_yaw is not None and obj_yaw is not None:
+                yaw_err = abs(_angle_diff(target_yaw, obj_yaw))
+                if self._recent_object_yaw_error:
+                    yaw_error_inc_score = max(0.0, yaw_err - min(self._recent_object_yaw_error))
+                self._recent_object_yaw_error.append(yaw_err)
+
+            pose_drift_score = 0.0
+            if (
+                obj_x is not None
+                and obj_y is not None
+                and obj_z is not None
+                and eef_x is not None
+                and eef_y is not None
+                and eef_z is not None
+            ):
+                dist = math.sqrt(
+                    (obj_x - eef_x) ** 2
+                    + (obj_y - eef_y) ** 2
+                    + (obj_z - eef_z) ** 2
+                )
+                if self._recent_object_eef_dist:
+                    pose_drift_score = max(0.0, dist - min(self._recent_object_eef_dist))
+                self._recent_object_eef_dist.append(dist)
+
+            vertical_score = 0.0
+            drop = False
+            if obj_z is not None:
+                if self._recent_object_z:
+                    vertical_score = max(0.0, max(self._recent_object_z) - obj_z)
+                self._recent_object_z.append(obj_z)
+                if lifted and obj_z < cfg.drop_height_threshold:
+                    drop = True
+
+            eef_stable = False
+            if eef_x is not None and eef_y is not None and eef_z is not None:
+                self._recent_eef_pos.append((eef_x, eef_y, eef_z))
+                if len(self._recent_eef_pos) >= 2:
+                    first_pos = self._recent_eef_pos[0]
+                    max_disp = max(
+                        abs(p[i] - first_pos[i])
+                        for p in self._recent_eef_pos
+                        for i in range(3)
+                    )
+                    eef_stable = max_disp < cfg.eef_stability_threshold
+
+            if vertical_score > 0 and not eef_stable:
+                vertical_score = 0.0
+
+            w = cfg.weights
+            score = 0.0
+            torsional_flag = lifted and torsional_score > cfg.torsional_slip_threshold
+            yaw_error_flag = lifted and yaw_error_inc_score > cfg.yaw_error_increase_threshold
+            pose_drift_flag = lifted and pose_drift_score > cfg.position_drift_threshold
+            vertical_flag = lifted and vertical_score > cfg.vertical_drop_threshold
+
+            if torsional_flag:
+                score += w.get("torsional", 0.0) * (torsional_score / cfg.torsional_slip_threshold)
+            if yaw_error_flag:
+                score += w.get("yaw_error", 0.0) * (yaw_error_inc_score / cfg.yaw_error_increase_threshold)
+            if pose_drift_flag:
+                score += w.get("pose_drift", 0.0) * (pose_drift_score / cfg.position_drift_threshold)
+            if vertical_flag:
+                score += w.get("vertical", 0.0) * (vertical_score / cfg.vertical_drop_threshold)
+            if drop:
+                score += 1.0
+
+            any_flag = torsional_flag or yaw_error_flag or pose_drift_flag or vertical_flag or drop
+
+            return SlipSignal(
+                step=int(record.get("step", 0)),
+                phase=str(record.get("phase", "UNKNOWN")),
+                slip_score=float(score),
+                torsional_slip=torsional_flag,
+                vertical_slip=vertical_flag,
+                pose_drift=pose_drift_flag,
+                drop=drop,
+                no_slip=not any_flag,
+            )
+
+        def process_trace(self, trace: list[dict[str, Any]]) -> list["SlipSignal"]:
+            """Return a ``SlipSignal`` for every step in ``trace``."""
+            self.reset()
+            return [self.update(record) for record in trace]
+
+    @dataclass
+    class _GripQualityMonitorConfig:
+        recovery_trigger_phases: set[str] = field(
+            default_factory=lambda: {"GRASP", "CONTACT_VERIFY", "LIFT_VERIFY", "LIFT"}
+        )
+        object_z_low_threshold: float = 0.023
+        gripper_width_high_threshold: float = 0.035
+        gripper_close_attempted_threshold: float = 0.05
+        lift_response_z_threshold: float = 0.005
+        min_grasp_steps_for_width: int = 10
+        min_lift_verify_steps_for_response: int = 3
+        lock_after_trigger: bool = True
+
+    @dataclass(frozen=True)
+    class _GripQualitySignal:
+        step: int
+        phase: str
+        object_z_at_grasp: float | None
+        gripper_width_after_close: float | None
+        object_height_response_to_lift: float | None
+        object_follows_eef_score: float | None
+        grip_quality_score: float
+        grip_failure_risk: float
+        trigger_micro_recovery: bool
+        reason: str | None
+
+    class _GripQualityMonitor:
+        """Container-side fallback mirroring the host GripQualityMonitor."""
+
+        def __init__(self, config: Optional["_GripQualityMonitorConfig"] = None) -> None:
+            self.config = config or _GripQualityMonitorConfig()
+            self._object_z_at_grasp: float | None = None
+            self._min_gripper_width_seen: float | None = None
+            self._grasp_steps_seen: int = 0
+            self._lift_verify_start_object_z: float | None = None
+            self._lift_verify_steps: int = 0
+            self._triggered: bool = False
+
+        def reset(self) -> None:
+            self._object_z_at_grasp = None
+            self._min_gripper_width_seen = None
+            self._grasp_steps_seen = 0
+            self._lift_verify_start_object_z = None
+            self._lift_verify_steps = 0
+            self._triggered = False
+
+        def update(self, record: dict[str, Any]) -> "_GripQualitySignal":
+            cfg = self.config
+            step = int(record.get("step", 0))
+            phase = str(record.get("phase", "UNKNOWN"))
+            object_z = _get(record, "object_z")
+            gripper_pos = _get(record, "gripper_pos")
+            eef_z = _get(record, "eef_z")
+
+            if phase == "GRASP" and object_z is not None:
+                if self._object_z_at_grasp is None:
+                    self._object_z_at_grasp = object_z
+                self._grasp_steps_seen += 1
+                if gripper_pos is not None and self._grasp_steps_seen >= cfg.min_grasp_steps_for_width:
+                    if self._min_gripper_width_seen is None or gripper_pos < self._min_gripper_width_seen:
+                        self._min_gripper_width_seen = gripper_pos
+
+            if phase in ("LIFT_VERIFY", "LIFT"):
+                if self._lift_verify_start_object_z is None and object_z is not None:
+                    self._lift_verify_start_object_z = object_z
+                self._lift_verify_steps += 1
+
+            # Current lift response relative to the start of the guarded lift.
+            baseline_z = self._lift_verify_start_object_z
+            if baseline_z is None:
+                baseline_z = self._object_z_at_grasp
+            object_height_response_to_lift = (
+                object_z - baseline_z
+                if object_z is not None and baseline_z is not None
+                else None
+            )
+
+            object_follows_eef_score: float | None = None
+            if object_z is not None and eef_z is not None:
+                object_follows_eef_score = abs(eef_z - object_z)
+
+            low_z = (
+                self._object_z_at_grasp is not None
+                and self._object_z_at_grasp < cfg.object_z_low_threshold
+            )
+            gripper_attempted = (
+                self._min_gripper_width_seen is not None
+                and self._min_gripper_width_seen < cfg.gripper_close_attempted_threshold
+            )
+            gripper_too_open = (
+                gripper_attempted
+                and self._min_gripper_width_seen is not None
+                and self._min_gripper_width_seen > cfg.gripper_width_high_threshold
+            )
+            weak_lift = (
+                phase in ("LIFT_VERIFY", "LIFT")
+                and self._lift_verify_steps >= cfg.min_lift_verify_steps_for_response
+                and object_height_response_to_lift is not None
+                and object_height_response_to_lift < cfg.lift_response_z_threshold
+            )
+
+            indicators = [low_z, gripper_too_open, weak_lift]
+            active = [i for i in indicators if i]
+            grip_failure_risk = len(active) / len(indicators) if indicators else 0.0
+            grip_quality_score = 1.0 - grip_failure_risk
+
+            reasons: list[str] = []
+            if low_z:
+                reasons.append(f"low_object_z={self._object_z_at_grasp:.4f}")
+            if gripper_too_open:
+                reasons.append(f"gripper_too_open={self._min_gripper_width_seen:.4f}")
+            if weak_lift:
+                reasons.append(f"weak_lift_response={object_height_response_to_lift:.4f}")
+            reason = "; ".join(reasons) if reasons else None
+
+            can_trigger = (
+                not (cfg.lock_after_trigger and self._triggered)
+                and phase in cfg.recovery_trigger_phases
+                and low_z
+                and gripper_too_open
+                and weak_lift
+            )
+            if can_trigger:
+                self._triggered = True
+
+            return _GripQualitySignal(
+                step=step,
+                phase=phase,
+                object_z_at_grasp=self._object_z_at_grasp,
+                gripper_width_after_close=self._min_gripper_width_seen,
+                object_height_response_to_lift=object_height_response_to_lift,
+                object_follows_eef_score=object_follows_eef_score,
+                grip_quality_score=round(grip_quality_score, 4),
+                grip_failure_risk=round(grip_failure_risk, 4),
+                trigger_micro_recovery=can_trigger,
+                reason=reason,
+            )
+
+        def process_trace(self, trace: list[dict[str, Any]]) -> list["_GripQualitySignal"]:
+            self.reset()
+            return [self.update(record) for record in trace]
+
+    # Expose fallback classes under the names the policy expects when the host
+    # module is not mounted into the container.
+    GripQualityMonitorConfig = _GripQualityMonitorConfig
+    GripQualityMonitor = _GripQualityMonitor
+
+    # Container-side fallback for residual policy (Sprint 5 v1.9).
+    class _ResidualAction:
+        def __init__(self):
+            self.delta_pos = [0.0, 0.0, 0.0]
+            self.delta_rot = [0.0, 0.0, 0.0]
+            self.delta_gripper = 0.0
+            self.active_axes = [False] * 7
+            self.confidence = 0.0
+            self.reason = None
+
+    class _ResidualNonePolicy:
+        def predict(self, observation, contact_signal, slip_signal, grip_quality_signal, phase):
+            return _ResidualAction()
+
+    class _ResidualPolicyWrapper:
+        def __init__(self, residual_policy=None):
+            self.residual_policy = residual_policy or _ResidualNonePolicy()
+
+        def compute_final_action(self, heuristic_action, obs, **signals):
+            return list(heuristic_action)
+
+        def residual_action_norm(self, residual_action):
+            return 0.0
+
+    ResidualPolicyWrapper = _ResidualPolicyWrapper
+
+    @dataclass(frozen=True)
+    class _ContactSignal:
+        """Container-side fallback for the host ``ContactSignal``."""
+
+        step: int
+        phase: str
+        source: str
+        gripper_width: float | None = None
+        gripper_command: float | None = None
+        gripper_width_error: float | None = None
+        object_z: float | None = None
+        eef_z: float | None = None
+        object_eef_distance: float | None = None
+        object_displacement_from_grasp: float | None = None
+        normal_force_estimate: float | None = None
+        tangential_force_proxy: float | None = None
+        torsional_friction_proxy: float | None = None
+        contact_confidence: float = 0.0
+        contact_state: str = "unknown"
+        reason: str | None = None
+
+    @dataclass
+    class _ContactSignalProvider:
+        """Container-side fallback mirroring the host ``ContactSignalProvider``."""
+
+        gripper_close_threshold: float = 0.012
+        grasp_dist_threshold: float = 0.04
+        no_contact_width: float = 0.08
+        push_away_delta: float = 0.02
+        push_away_distance_margin: float = 0.02
+        weak_contact_open_factor: float = 1.5
+
+        _grasp_start_object_pos: Any = field(default=None, repr=False)
+        _grasp_start_eef_pos: Any = field(default=None, repr=False)
+
+        def reset(self) -> None:
+            self._grasp_start_object_pos = None
+            self._grasp_start_eef_pos = None
+
+        @staticmethod
+        def _norm(a: Any, b: Any) -> float | None:
+            if a is None or b is None:
+                return None
+            try:
+                import numpy as np
+
+                a = np.asarray(a, dtype=float)
+                b = np.asarray(b, dtype=float)
+                return float(np.linalg.norm(a - b))
+            except Exception:
+                return None
+
+        @staticmethod
+        def _as_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                return float(value.item() if hasattr(value, "item") else value)
+            except Exception:
+                return None
+
+        def compute_from_kinematics(
+            self,
+            frame: dict[str, Any],
+            grasp_start: dict[str, Any] | None = None,
+        ) -> "_ContactSignal":
+            step = int(frame.get("step", 0))
+            phase = str(frame.get("phase", "UNKNOWN"))
+
+            gripper_width = self._as_float(frame.get("gripper_pos"))
+            object_pos = frame.get("object_pos")
+            eef_pos = frame.get("eef_pos")
+
+            if grasp_start is not None:
+                self._grasp_start_object_pos = grasp_start.get("object_pos") or self._grasp_start_object_pos
+                self._grasp_start_eef_pos = grasp_start.get("eef_pos") or self._grasp_start_eef_pos
+
+            if self._grasp_start_object_pos is None and object_pos is not None:
+                self._grasp_start_object_pos = object_pos
+            if self._grasp_start_eef_pos is None and eef_pos is not None:
+                self._grasp_start_eef_pos = eef_pos
+
+            object_eef_distance = self._norm(object_pos, eef_pos)
+            object_displacement = self._norm(object_pos, self._grasp_start_object_pos)
+            start_distance = self._norm(self._grasp_start_object_pos, self._grasp_start_eef_pos)
+
+            object_z = self._as_float(frame.get("object_z"))
+            if object_z is None and object_pos is not None:
+                try:
+                    object_z = self._as_float(object_pos[2])
+                except Exception:
+                    object_z = None
+            eef_z = self._as_float(frame.get("eef_z"))
+            if eef_z is None and eef_pos is not None:
+                try:
+                    eef_z = self._as_float(eef_pos[2])
+                except Exception:
+                    eef_z = None
+
+            contact_state = "unknown"
+            confidence = 0.0
+            reason: str | None = None
+
+            if gripper_width is None or object_pos is None or eef_pos is None:
+                contact_state = "unknown"
+                confidence = 0.0
+                reason = "missing_observation"
+            elif gripper_width > self.no_contact_width:
+                contact_state = "no_contact"
+                confidence = 0.8
+                reason = f"gripper_still_open={gripper_width:.4f}"
+            elif object_displacement is not None and (
+                object_displacement > self.push_away_delta
+                or (object_eef_distance is not None and start_distance is not None and object_eef_distance > start_distance + self.push_away_distance_margin)
+            ):
+                contact_state = "pushed_away"
+                confidence = 0.8
+                reason = f"object_delta={object_displacement:.4f}"
+            elif gripper_width > self.gripper_close_threshold * self.weak_contact_open_factor:
+                contact_state = "likely_contact"
+                confidence = 0.7
+                reason = f"gripper_blocked={gripper_width:.4f}"
+            else:
+                contact_state = "weak_contact_no_lift"
+                confidence = 0.6
+                reason = f"gripper_closed={gripper_width:.4f}"
+
+            normal_force_estimate: float | None = None
+            if gripper_width is not None and gripper_width <= self.no_contact_width:
+                normal_force_estimate = max(0.0, self.no_contact_width - gripper_width) / max(1e-6, self.no_contact_width)
+
+            return _ContactSignal(
+                step=step,
+                phase=phase,
+                source="kinematics",
+                gripper_width=gripper_width,
+                object_z=object_z,
+                eef_z=eef_z,
+                object_eef_distance=object_eef_distance,
+                object_displacement_from_grasp=object_displacement,
+                normal_force_estimate=round(normal_force_estimate, 4) if normal_force_estimate is not None else None,
+                contact_confidence=round(confidence, 4),
+                contact_state=contact_state,
+                reason=reason,
+            )
+
+        def compute_from_gripper_joint(self, frame: dict[str, Any]) -> "_ContactSignal":
+            step = int(frame.get("step", 0))
+            phase = str(frame.get("phase", "UNKNOWN"))
+
+            gripper_width = self._as_float(frame.get("gripper_pos"))
+            gripper_command = self._as_float(frame.get("gripper_cmd"))
+            width_error = (
+                abs(gripper_width - gripper_command)
+                if gripper_width is not None and gripper_command is not None
+                else None
+            )
+
+            contact_state = "unknown"
+            confidence = 0.0
+            reason: str | None = None
+
+            if width_error is None:
+                contact_state = "unknown"
+                confidence = 0.0
+                reason = "missing_command"
+            elif gripper_command < 0.5 and width_error > 0.01:
+                contact_state = "likely_contact"
+                confidence = 0.75
+                reason = f"close_command_unmet_error={width_error:.4f}"
+            elif gripper_command < 0.5 and width_error <= 0.01:
+                contact_state = "weak_contact_no_lift"
+                confidence = 0.5
+                reason = f"close_command_met_error={width_error:.4f}"
+            else:
+                contact_state = "no_contact"
+                confidence = 0.4
+                reason = f"open_command_error={width_error:.4f}"
+
+            return _ContactSignal(
+                step=step,
+                phase=phase,
+                source="gripper_joint",
+                gripper_width=gripper_width,
+                gripper_command=gripper_command,
+                gripper_width_error=round(width_error, 4) if width_error is not None else None,
+                contact_confidence=round(confidence, 4),
+                contact_state=contact_state,
+                reason=reason,
+            )
+
+        @staticmethod
+        def merge_sources(signals: list["_ContactSignal"]) -> "_ContactSignal | None":
+            if not signals:
+                return None
+            ranked = sorted(signals, key=lambda s: s.contact_confidence, reverse=True)
+            best = ranked[0]
+            if len(ranked) == 1:
+                return best
+            second = ranked[1]
+            if best.contact_state != second.contact_state and best.contact_confidence - second.contact_confidence < 0.2:
+                return _ContactSignal(
+                    step=best.step,
+                    phase=best.phase,
+                    source="merged_conflict",
+                    gripper_width=best.gripper_width,
+                    gripper_command=best.gripper_command,
+                    gripper_width_error=best.gripper_width_error,
+                    object_z=best.object_z,
+                    eef_z=best.eef_z,
+                    object_eef_distance=best.object_eef_distance,
+                    object_displacement_from_grasp=best.object_displacement_from_grasp,
+                    contact_confidence=round((best.contact_confidence + second.contact_confidence) / 2, 4),
+                    contact_state="unknown",
+                    reason=f"conflict:{best.source}:{best.contact_state}_vs_{second.source}:{second.contact_state}",
+                )
+            return best
+
+        def process_trace(
+            self,
+            trace: list[dict[str, Any]],
+            include_gripper_joint: bool = False,
+        ) -> list["_ContactSignal"]:
+            merged: list["_ContactSignal"] = []
+            for frame in trace:
+                sources = [self.compute_from_kinematics(frame)]
+                if include_gripper_joint:
+                    sources.append(self.compute_from_gripper_joint(frame))
+                consensus = self.merge_sources(sources)
+                merged.append(consensus if consensus is not None else sources[0])
+            return merged
+
+    ContactSignal = _ContactSignal
+    ContactSignalProvider = _ContactSignalProvider
 
     def _extract_geometry_from_config(config: dict[str, Any]) -> "_ObjectGeometry":
         size = config.get("size")
@@ -315,6 +918,7 @@ except Exception:  # pragma: no cover - host side does not have IsaacLab-Arena i
 
 _TRACE_DIR = os.environ.get("ROSCLAW_TRACE_DIR", "/workspace/data/traces")
 _TRACE_PATH = os.path.join(_TRACE_DIR, "episode_trace.jsonl")
+_DEBUG_LOG_PATH = os.path.join(_TRACE_DIR, "run_eval_debug.log")
 
 # Ensure the trace directory exists (host bind mount may not create it).
 try:
@@ -338,6 +942,17 @@ def _append_trace(step: dict[str, Any]) -> None:
     except Exception as e:
         import sys
         print(f"[TRACE_WRITE_ERROR] {e}", file=sys.stderr)
+        pass
+
+
+def _trace_log(message: str) -> None:
+    """Append a timestamped message to the persistent container-side debug log."""
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            f.write(f"{ts} {message}\n")
+            f.flush()
+    except Exception:
         pass
 
 
@@ -573,6 +1188,7 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     pre_grasp_orient: bool = True
     grasp_target_yaw_offset: float = 0.0
     pre_grasp_yaw_threshold: float = 0.2
+    pre_grasp_orient_max_steps: int = 30
     reorient_before_align: bool = True
     reorient_height_offset: float = 0.05
     max_lift_delta_z: float = 0.08
@@ -638,9 +1254,71 @@ class HeuristicServoGoalPosePolicyArgs(HeuristicServoLiftPolicyArgs):
     # state machine: they re-parameterise the existing PRE_GRASP_YAW_ALIGN /
     # REORIENT phases to test whether the large-yaw failure is a coupling /
     # torsional-slip problem or an in-hand-reorientation problem.
-    large_yaw_strategy: str | None = None  # "grasp_at_target_yaw" | "low_height_incremental_yaw"
+    large_yaw_strategy: str | None = None  # "grasp_at_target_yaw" | "low_height_incremental_yaw" | "table_push_align"
     disable_inhand_reorient: bool = False
     lift_height_before_yaw: float = 0.05
+
+    # Table push-align strategy (Sprint 6 v1.7 follow-up).
+    # Keeps the object pressed against the tabletop while applying yaw torque,
+    # using table reaction friction instead of pure in-hand friction.
+    table_push_align_table_z: float | None = None
+    table_push_align_z_offset: float = 0.02
+    table_push_align_max_steps: int = 80
+    table_push_align_min_steps: int = 10
+    table_push_align_orientation_threshold: float = 0.3
+    table_push_align_yaw_step: float = 0.10
+    table_push_align_lateral_amplitude: float = 0.005
+    table_push_align_lateral_period: int = 20
+    table_push_align_downward_kp: float = 1.0
+    table_push_align_consecutive_aligned_steps: int = 5
+    table_push_align_min_yaw_error: float = 0.5
+
+    # Closed-loop slip-aware recovery controls (Sprint 6 v1.8).
+    enable_slip_monitor: bool = False
+    slip_recovery_strategy: str | None = None
+    slip_monitor_event_threshold: float = 3.5
+    slip_recovery_consecutive_steps: int = 3
+    slip_recovery_max_attempts: int = 2
+    slip_recovery_pause_steps: int = 10
+    slip_recovery_lower_delta_z: float = 0.05
+    slip_recovery_place_push_z_offset: float = 0.02
+    slip_recovery_place_push_max_steps: int = 40
+    slip_recovery_place_push_yaw_step: float = 0.10
+    slip_recovery_abort_yaw_threshold: float = 0.5
+
+    # Conditional seed-24 micro-recovery controls (Sprint 1 v1.9).
+    enable_grip_quality_monitor: bool = False
+    micro_recovery_strategy: str | None = None  # "lower_reclose" | "z_adjust" | "grip_verify" | "best_combined"
+    grip_quality_object_z_low_threshold: float = 0.023
+    grip_quality_gripper_width_high_threshold: float = 0.035
+    grip_quality_lift_response_z_threshold: float = 0.005
+    grip_quality_early_trigger_risk_threshold: float = 0.66
+    grip_quality_grasp_z_error_threshold: float = 0.0046
+    grip_quality_recovery_trigger_phases: set[str] = field(
+        default_factory=lambda: {"GRASP", "CONTACT_VERIFY", "LIFT_VERIFY", "LIFT"}
+    )
+    grip_quality_early_trigger_phases: set[str] = field(
+        default_factory=lambda: {"GRASP", "CONTACT_VERIFY"}
+    )
+    micro_recovery_lower_delta_z: float = 0.015
+    micro_recovery_reclose_steps: int = 8
+    micro_recovery_z_adjust: float = 0.005
+    micro_recovery_max_attempts: int = 1
+
+    # ContactSignal abstraction (Sprint 2 v1.9).
+    enable_contact_signal: bool = False
+
+    # Residual policy pilot (Sprint 5 v1.9).
+    enable_residual_policy: bool = False
+    residual_policy: str = "none"
+    residual_enabled_phases: list[str] = field(default_factory=list)
+    residual_policy_path: str | None = None
+    trigger_model_path: str | None = None
+    trigger_threshold: float = 0.5
+
+    # Large-yaw route classifier diagnostic (Sprint 8 v1.10).
+    enable_route_classifier: bool = False
+    route_classifier_path: str | None = None
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> "HeuristicServoGoalPosePolicyArgs":
@@ -1247,6 +1925,7 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
     config_class = HeuristicServoGoalPosePolicyArgs
 
     def __init__(self, config: HeuristicServoGoalPosePolicyArgs):
+        _trace_log(f"[HEURISTIC_POLICY] HeuristicServoGoalPosePolicy.__init__ entered; enable_route_classifier={getattr(config, 'enable_route_classifier', False)}")
         super().__init__(config)
         # Record schema version so downstream analysis can distinguish
         # object-yaw error from end-effector-yaw error.
@@ -1272,6 +1951,9 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         self._pre_grasp_orient = config.pre_grasp_orient
         self._grasp_target_yaw_offset = config.grasp_target_yaw_offset
         self._pre_grasp_yaw_threshold = config.pre_grasp_yaw_threshold
+        self._pre_grasp_orient_max_steps = getattr(
+            config, "pre_grasp_orient_max_steps", 30
+        )
         self._reorient_before_align = config.reorient_before_align
         self._reorient_height_offset = config.reorient_height_offset
         self._max_lift_delta_z = config.max_lift_delta_z
@@ -1330,14 +2012,37 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             self._lift_height = self._lift_height_before_yaw
             self._reorient_height_offset = self._lift_height_before_yaw
             self._reorient_before_align = True
+        elif self._large_yaw_strategy == "table_push_align":
+            # Table push-align does not use in-air pre-grasp yaw alignment;
+            # instead it orients the object while it is still pressed against
+            # the tabletop, exploiting table reaction torque.
+            self._pre_grasp_yaw_align_v2 = False
+            self._reorient_before_align = False
+            self._lift_height = getattr(config, "lift_height", 0.25)
         if self._disable_inhand_reorient:
             self._reorient_before_align = False
+
+        # Table push-align state (Sprint 6 v1.7 follow-up).
+        self._table_push_align_table_z = getattr(config, "table_push_align_table_z", None)
+        self._table_push_align_z_offset = getattr(config, "table_push_align_z_offset", 0.02)
+        self._table_push_align_max_steps = getattr(config, "table_push_align_max_steps", 80)
+        self._table_push_align_min_steps = getattr(config, "table_push_align_min_steps", 10)
+        self._table_push_align_orientation_threshold = getattr(config, "table_push_align_orientation_threshold", 0.3)
+        self._table_push_align_yaw_step = getattr(config, "table_push_align_yaw_step", 0.10)
+        self._table_push_align_lateral_amplitude = getattr(config, "table_push_align_lateral_amplitude", 0.005)
+        self._table_push_align_lateral_period = getattr(config, "table_push_align_lateral_period", 20)
+        self._table_push_align_downward_kp = getattr(config, "table_push_align_downward_kp", 1.0)
+        self._table_push_align_consecutive_aligned_steps = getattr(config, "table_push_align_consecutive_aligned_steps", 5)
+        self._table_push_align_min_yaw_error = getattr(config, "table_push_align_min_yaw_error", 0.5)
+        self._table_push_align_aligned_steps = 0
 
         # Object-following verification state.
         self._object_following_verified = False
         self._lift_start_object_pos: torch.Tensor | None = None
         self._lift_start_eef_pos: torch.Tensor | None = None
         self._initial_object_pos: torch.Tensor | None = None
+        self._initial_object_z: float | None = None
+        self._prev_object_z: float | None = None
         self._last_gate_diagnostics: dict[str, Any] | None = None
         self._seed_randomization_done = False
 
@@ -1364,6 +2069,254 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             if config.object_geometry is not None:
                 self._object_geometry = extract_geometry_from_config(config.object_geometry)
                 self._apply_geometry_adaptation(self._object_geometry)
+
+        # Closed-loop slip-aware recovery state (Sprint 6 v1.8).
+        self._enable_slip_monitor = getattr(config, "enable_slip_monitor", False)
+        self._slip_recovery_strategy = getattr(config, "slip_recovery_strategy", None)
+        self._slip_monitor_event_threshold = getattr(config, "slip_monitor_event_threshold", 3.5)
+        self._slip_recovery_consecutive_steps = getattr(config, "slip_recovery_consecutive_steps", 3)
+        self._slip_recovery_max_attempts = getattr(config, "slip_recovery_max_attempts", 2)
+        self._slip_recovery_pause_steps = getattr(config, "slip_recovery_pause_steps", 10)
+        self._slip_recovery_lower_delta_z = getattr(config, "slip_recovery_lower_delta_z", 0.05)
+        self._slip_recovery_place_push_z_offset = getattr(config, "slip_recovery_place_push_z_offset", 0.02)
+        self._slip_recovery_place_push_max_steps = getattr(config, "slip_recovery_place_push_max_steps", 40)
+        self._slip_recovery_place_push_yaw_step = getattr(config, "slip_recovery_place_push_yaw_step", 0.10)
+        self._slip_recovery_abort_yaw_threshold = getattr(config, "slip_recovery_abort_yaw_threshold", 0.5)
+
+        self._slip_monitor: Any = None
+        self._slip_trace: list[dict[str, Any]] = []
+        self._slip_consecutive_count = 0
+        self._slip_event_active = False
+        self._slip_recovery_attempts = 0
+        self._slip_recovery_pause_counter = 0
+        self._slip_recovery_place_push_counter = 0
+        self._slip_recovery_resume_state: str | None = None
+        self._slip_recovery_lower_target_z: float | None = None
+        if self._enable_slip_monitor:
+            try:
+                sm_cfg = SlipMonitorConfig(
+                    event_score_threshold=self._slip_monitor_event_threshold,
+                )
+                self._slip_monitor = SlipMonitor(sm_cfg)
+            except Exception as exc:
+                print(f"[SLIP_MONITOR] init failed: {exc}", file=sys.stderr)
+                self._enable_slip_monitor = False
+
+        # Conditional seed-24 micro-recovery state (Sprint 1 v1.9).
+        self._enable_grip_quality_monitor = getattr(config, "enable_grip_quality_monitor", False)
+        self._micro_recovery_strategy = getattr(config, "micro_recovery_strategy", None)
+        self._grip_quality_object_z_low_threshold = getattr(
+            config, "grip_quality_object_z_low_threshold", 0.023
+        )
+        self._grip_quality_gripper_width_high_threshold = getattr(
+            config, "grip_quality_gripper_width_high_threshold", 0.035
+        )
+        self._grip_quality_lift_response_z_threshold = getattr(
+            config, "grip_quality_lift_response_z_threshold", 0.005
+        )
+        self._grip_quality_early_trigger_risk_threshold = getattr(
+            config, "grip_quality_early_trigger_risk_threshold", 0.67
+        )
+        self._grip_quality_grasp_z_error_threshold = getattr(
+            config, "grip_quality_grasp_z_error_threshold", 0.0046
+        )
+        self._grip_quality_recovery_trigger_phases = set(
+            getattr(
+                config,
+                "grip_quality_recovery_trigger_phases",
+                {"GRASP", "CONTACT_VERIFY", "LIFT_VERIFY", "LIFT"},
+            )
+        )
+        self._grip_quality_early_trigger_phases = set(
+            getattr(
+                config,
+                "grip_quality_early_trigger_phases",
+                {"GRASP", "CONTACT_VERIFY"},
+            )
+        )
+        self._micro_recovery_lower_delta_z = getattr(config, "micro_recovery_lower_delta_z", 0.015)
+        self._micro_recovery_reclose_steps = getattr(config, "micro_recovery_reclose_steps", 8)
+        self._micro_recovery_z_adjust = getattr(config, "micro_recovery_z_adjust", 0.005)
+        self._micro_recovery_max_attempts = getattr(config, "micro_recovery_max_attempts", 1)
+
+        self._grip_quality_monitor: Any = None
+        self._grip_quality_signal: Any = None
+        self._grip_quality_triggered = False
+        self._micro_recovery_attempts = 0
+        self._micro_recovery_step = 0
+        self._micro_recovery_lower_target_z: float | None = None
+        if self._enable_grip_quality_monitor:
+            try:
+                gq_cfg = GripQualityMonitorConfig(
+                    object_z_low_threshold=self._grip_quality_object_z_low_threshold,
+                    gripper_width_high_threshold=self._grip_quality_gripper_width_high_threshold,
+                    lift_response_z_threshold=self._grip_quality_lift_response_z_threshold,
+                    recovery_trigger_phases=self._grip_quality_recovery_trigger_phases,
+                )
+                self._grip_quality_monitor = GripQualityMonitor(gq_cfg)
+            except Exception as exc:
+                print(f"[GRIP_QUALITY_MONITOR] init failed: {exc}", file=sys.stderr)
+                self._enable_grip_quality_monitor = False
+
+        # Persistent container-side debug log for grip-quality diagnostics.
+        self._grip_quality_debug_path = os.path.join(
+            os.environ.get("ROSCLAW_TRACE_DIR", "/workspace/data/traces"),
+            "grip_quality_debug.log",
+        )
+        try:
+            os.makedirs(os.path.dirname(self._grip_quality_debug_path), exist_ok=True)
+            with open(self._grip_quality_debug_path, "w", encoding="utf-8") as _gq_dbg:
+                _gq_dbg.write(
+                    f"init enable={self._enable_grip_quality_monitor} "
+                    f"monitor={self._grip_quality_monitor is not None} "
+                    f"strategy={self._micro_recovery_strategy}\n"
+                )
+        except Exception:
+            self._grip_quality_debug_path = None
+
+        # ContactSignal abstraction state (Sprint 2 v1.9).
+        self._enable_contact_signal = getattr(config, "enable_contact_signal", False)
+        self._contact_signal_provider: Any = None
+        self._contact_signal: Any = None
+        if self._enable_contact_signal:
+            try:
+                self._contact_signal_provider = ContactSignalProvider(
+                    gripper_close_threshold=self._gripper_close_threshold,
+                    grasp_dist_threshold=self._grasp_dist_threshold,
+                )
+            except Exception as exc:
+                print(f"[CONTACT_SIGNAL] init failed: {exc}", file=sys.stderr)
+                self._enable_contact_signal = False
+
+        # Residual policy pilot state (Sprint 5 v1.9).
+        self._enable_residual_policy = getattr(config, "enable_residual_policy", False)
+        self._residual_policy_name = getattr(config, "residual_policy", "none")
+        self._residual_enabled_phases = set(
+            getattr(config, "residual_enabled_phases", [])
+        )
+        self._residual_policy: Any = None
+        self._residual_wrapper: Any = None
+        if self._enable_residual_policy:
+            try:
+                from pathlib import Path as _Path
+
+                from rosclaw_darwin.learning.bounded_residual_policy import (
+                    BoundedResidualModel,
+                    BoundedResidualPolicy,
+                    TriggeredResidualPolicy,
+                    TriggeredRuleResidualPolicy,
+                )
+                from rosclaw_darwin.learning.residual_policy import (
+                    ResidualPolicyWrapper,
+                    ResidualSeed24GuardPolicy,
+                    ResidualSlipGuardPolicy,
+                )
+                from rosclaw_darwin.learning.trigger_model import TriggerModel
+
+                if self._residual_policy_name == "seed24_guard":
+                    self._residual_policy = ResidualSeed24GuardPolicy()
+                elif self._residual_policy_name == "slip_guard":
+                    self._residual_policy = ResidualSlipGuardPolicy()
+                elif self._residual_policy_name == "bounded_learned":
+                    model_path = getattr(config, "residual_policy_path", None)
+                    if model_path and _Path(model_path).exists():
+                        model = BoundedResidualModel.load(model_path)
+                        self._residual_policy = BoundedResidualPolicy(model)
+                    else:
+                        print(
+                            f"[RESIDUAL_POLICY] bounded_learned model path missing or not mounted: {model_path}",
+                            file=sys.stderr,
+                        )
+                        self._enable_residual_policy = False
+                elif self._residual_policy_name == "triggered_bounded_learned":
+                    residual_path = getattr(config, "residual_policy_path", None)
+                    trigger_path = getattr(config, "trigger_model_path", None)
+                    if (
+                        residual_path
+                        and trigger_path
+                        and _Path(residual_path).exists()
+                        and _Path(trigger_path).exists()
+                    ):
+                        trigger_model = TriggerModel.load(trigger_path)
+                        residual_model = BoundedResidualModel.load(residual_path)
+                        threshold = getattr(config, "trigger_threshold", 0.5)
+                        self._residual_policy = TriggeredResidualPolicy(
+                            trigger_model=trigger_model,
+                            residual_model=residual_model,
+                            trigger_threshold=threshold,
+                        )
+                    else:
+                        print(
+                            f"[RESIDUAL_POLICY] triggered_bounded_learned model paths missing or not mounted: "
+                            f"residual={residual_path}, trigger={trigger_path}",
+                            file=sys.stderr,
+                        )
+                        self._enable_residual_policy = False
+                elif self._residual_policy_name == "triggered_rule":
+                    trigger_path = getattr(config, "trigger_model_path", None)
+                    if trigger_path and _Path(trigger_path).exists():
+                        trigger_model = TriggerModel.load(trigger_path)
+                        threshold = getattr(config, "trigger_threshold", 0.5)
+                        self._residual_policy = TriggeredRuleResidualPolicy(
+                            trigger_model=trigger_model,
+                            trigger_threshold=threshold,
+                        )
+                    else:
+                        print(
+                            f"[RESIDUAL_POLICY] triggered_rule trigger path missing or not mounted: {trigger_path}",
+                            file=sys.stderr,
+                        )
+                        self._enable_residual_policy = False
+                else:
+                    self._residual_policy = None
+                if self._residual_policy is not None:
+                    self._residual_wrapper = ResidualPolicyWrapper(
+                        residual_policy=self._residual_policy
+                    )
+            except Exception as exc:
+                print(f"[RESIDUAL_POLICY] host import failed: {exc}", file=sys.stderr)
+                self._enable_residual_policy = False
+                self._residual_policy = None
+                self._residual_wrapper = None
+
+        # Large-yaw route classifier diagnostic (Sprint 8 v1.10).
+        self._enable_route_classifier = getattr(config, "enable_route_classifier", False)
+        self._route_classifier_path = getattr(config, "route_classifier_path", None)
+        self._route_classifier: Any = None
+        self._route_prediction: str | None = None
+        self._route_confidence: float | None = None
+        if self._enable_route_classifier:
+            try:
+                from pathlib import Path as _Path
+
+                try:
+                    from route_classifier import RouteClassifier
+                except Exception:
+                    from rosclaw_darwin.learning.route_classifier import (
+                        RouteClassifier,
+                    )
+
+                route_path = self._route_classifier_path
+                _trace_log(f"[ROUTE_CLASSIFIER] init requested; path={route_path}")
+                if route_path and _Path(route_path).exists():
+                    self._route_classifier = RouteClassifier.load(route_path)
+                    msg = (
+                        f"[ROUTE_CLASSIFIER] loaded from {route_path} "
+                        f"(input_dim={self._route_classifier.input_dim}, classes={self._route_classifier.num_classes})"
+                    )
+                    print(msg, file=sys.stderr)
+                    _trace_log(msg)
+                else:
+                    msg = f"[ROUTE_CLASSIFIER] path missing or not mounted: {route_path}. Disabling route diagnostic."
+                    print(msg, file=sys.stderr)
+                    _trace_log(msg)
+                    self._enable_route_classifier = False
+            except Exception as exc:
+                msg = f"[ROUTE_CLASSIFIER] host import/load failed: {exc}"
+                print(msg, file=sys.stderr)
+                _trace_log(msg)
+                self._enable_route_classifier = False
+                self._route_classifier = None
 
         # Goal-pose specific hint effects.
         if "precision_placement" in self._skill_hints:
@@ -1640,28 +2593,26 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             self._apply_position(action, eef_pos, eef_quat, target)
             action = self._set_gripper(action, open=True)
             object_yaw = self._extract_object_yaw(env, device)
+            target_quat_b: torch.Tensor | None = None
             if (
                 object_yaw is not None
                 and eef_quat is not None
                 and not self._skip_broken_yaw_control
             ):
-                desired_yaw = object_yaw + self._grasp_target_yaw_offset
-                desired_yaw_quat = torch.tensor(
-                    [0.0, 0.0, math.sin(desired_yaw / 2.0), math.cos(desired_yaw / 2.0)],
-                    device=device,
-                    dtype=eef_quat.dtype,
+                target_quat_b = self._pre_grasp_target_quat(
+                    object_yaw, eef_quat, env, device
                 )
-                self._apply_orientation(action, eef_quat, desired_yaw_quat)
+                self._apply_orientation(action, eef_quat, target_quat_b)
             # Abort yaw alignment if we are already too close to the object.
             safety_ok = torch.norm(object_pos[:2] - eef_pos[:2]) > self._pre_grasp_yaw_safety_distance
             yaw_err = 0.0
-            if object_yaw is not None and eef_quat is not None and not self._skip_broken_yaw_control:
-                desired_yaw = object_yaw + self._grasp_target_yaw_offset
-                current_yaw = self._quat_to_yaw(eef_quat)
-                yaw_err = abs(self._angle_diff(desired_yaw, current_yaw))
+            if target_quat_b is not None and eef_quat is not None and not self._skip_broken_yaw_control:
+                yaw_err = abs(self._angle_diff(
+                    self._quat_to_yaw(target_quat_b), self._quat_to_yaw(eef_quat)
+                ))
             yaw_ok = object_yaw is None or yaw_err < self._pre_grasp_yaw_threshold or self._skip_broken_yaw_control
             position_ok = torch.norm(object_pos[:2] - eef_pos[:2]) < self._approach_horizontal_threshold
-            if position_ok and (yaw_ok or not safety_ok or self._state_step >= 30):
+            if position_ok and (yaw_ok or not safety_ok or self._state_step >= self._pre_grasp_orient_max_steps):
                 if self._pre_grasp_orient:
                     self._transition("PRE_GRASP_ORIENT")
                 else:
@@ -1713,27 +2664,25 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             self._apply_position(action, eef_pos, eef_quat, target)
             action = self._set_gripper(action, open=True)
             object_yaw = self._extract_object_yaw(env, device)
+            target_quat_b: torch.Tensor | None = None
             if object_yaw is not None and eef_quat is not None and not self._skip_broken_yaw_control:
-                desired_yaw = object_yaw + self._grasp_target_yaw_offset
-                target_quat_pre = torch.tensor(
-                    [0.0, 0.0, math.sin(desired_yaw / 2.0), math.cos(desired_yaw / 2.0)],
-                    device=device,
-                    dtype=eef_quat.dtype,
+                target_quat_b = self._pre_grasp_target_quat(
+                    object_yaw, eef_quat, env, device
                 )
-                self._apply_orientation(action, eef_quat, target_quat_pre)
+                self._apply_orientation(action, eef_quat, target_quat_b)
             horiz = torch.norm(object_pos[:2] - eef_pos[:2])
             z_err = abs(eef_pos[2] - target[2])
             yaw_err = 0.0
-            if object_yaw is not None and eef_quat is not None and not self._skip_broken_yaw_control:
-                desired_yaw = object_yaw + self._grasp_target_yaw_offset
-                current_yaw = self._quat_to_yaw(eef_quat)
-                yaw_err = abs(self._angle_diff(desired_yaw, current_yaw))
+            if target_quat_b is not None and eef_quat is not None and not self._skip_broken_yaw_control:
+                yaw_err = abs(self._angle_diff(
+                    self._quat_to_yaw(target_quat_b), self._quat_to_yaw(eef_quat)
+                ))
             yaw_ok = object_yaw is None or yaw_err < self._pre_grasp_yaw_threshold or self._skip_broken_yaw_control
             position_ok = horiz < self._approach_horizontal_threshold and z_err < self._approach_offset_z * 0.5
             # When yaw is broken, use a short pause (5 steps) to stabilise above
             # the object before descending.
             settle_ok = self._skip_broken_yaw_control and self._state_step >= 5
-            if position_ok and (yaw_ok or self._state_step >= 30 or settle_ok):
+            if position_ok and (yaw_ok or self._state_step >= self._pre_grasp_orient_max_steps or settle_ok):
                 self._transition("DESCEND")
 
         elif self._state == "DESCEND":
@@ -1769,6 +2718,9 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
 
         elif self._state == "GRASP":
             action = self._set_gripper(action, open=False)
+            # Object yaw is needed to decide whether table push-align should be
+            # used for large target-yaw errors.
+            object_yaw = self._extract_object_yaw(env, device)
             # Record the object/eef pose at the start of the close phase so that
             # CONTACT_VERIFY can diagnose whether the gripper actually engaged
             # the object or pushed it away.
@@ -1787,10 +2739,75 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             if self._state_step >= self._min_grasp_steps:
                 close_ok = gripper_pos is not None and gripper_pos < self._gripper_close_threshold
                 if close_ok or self._state_step >= squeeze_deadline:
-                    if self._enable_regrasp and self._verify_lift_response_steps > 0:
+                    if self._large_yaw_strategy == "table_push_align" and self._should_table_push_align(target_quat, object_yaw):
+                        self._transition("TABLE_PUSH_ALIGN")
+                    elif self._enable_regrasp and self._verify_lift_response_steps > 0:
                         self._transition("CONTACT_VERIFY")
                     else:
                         self._transition("LIFT")
+
+        elif self._state == "TABLE_PUSH_ALIGN":
+            # Keep the object pressed against the tabletop while rotating the
+            # gripper toward the target yaw.  Table reaction friction provides
+            # the torque needed for large-yaw reorientation, avoiding the
+            # torsional slip seen during in-air rotation.
+            object_yaw = self._extract_object_yaw(env, device)
+            target_yaw = self._quat_to_yaw(target_quat) if target_quat is not None else None
+            yaw_error = (
+                abs(self._angle_diff(target_yaw, object_yaw))
+                if target_yaw is not None and object_yaw is not None
+                else float("inf")
+                        )
+
+            target = object_pos.clone() if object_pos is not None else (eef_pos.clone() if eef_pos is not None else torch.zeros(3, device=device))
+            # Keep the gripper pressing on the top of the object.  Using the live
+            # object centre height plus a small offset is more robust than a fixed
+            # table_z because object height can vary across assets.
+            target[2] = object_pos[2] + self._table_push_align_z_offset if object_pos is not None else target[2]
+
+            # Small tangential oscillation helps break static friction and lets
+            # the object pivot against the table instead of sticking to the fingers.
+            if self._table_push_align_lateral_amplitude > 0.0 and self._table_push_align_lateral_period > 0:
+                t = 2.0 * math.pi * self._state_step / self._table_push_align_lateral_period
+                target[0] += self._table_push_align_lateral_amplitude * math.sin(t)
+                target[1] += self._table_push_align_lateral_amplitude * math.cos(t)
+
+            self._apply_position(
+                action,
+                eef_pos,
+                eef_quat,
+                target,
+                kp_multiplier=self._table_push_align_downward_kp,
+                horizontal_scale=1.0,
+                max_delta=self._align_max_delta,
+            )
+
+            # Command orientation toward the target yaw, clamped to the push-align step.
+            if target_quat is not None and eef_quat is not None and not self._skip_broken_yaw_control:
+                original_yaw_step = self._yaw_step_size
+                self._yaw_step_size = self._table_push_align_yaw_step
+                try:
+                    self._apply_orientation(action, eef_quat, target_quat)
+                finally:
+                    self._yaw_step_size = original_yaw_step
+
+            action = self._set_gripper(action, open=False)
+
+            # Success: object yaw is close to target for several consecutive steps.
+            aligned = yaw_error < self._table_push_align_orientation_threshold
+            if aligned:
+                self._table_push_align_aligned_steps += 1
+            else:
+                self._table_push_align_aligned_steps = 0
+            if (
+                aligned
+                and self._table_push_align_aligned_steps >= self._table_push_align_consecutive_aligned_steps
+                and self._state_step >= self._table_push_align_min_steps
+            ):
+                self._transition("LIFT")
+            elif self._state_step >= self._table_push_align_max_steps:
+                # Timeout: lift anyway and see whether partial alignment is enough.
+                self._transition("LIFT")
 
         elif self._state == "CONTACT_VERIFY":
             # Hold the current pose with the gripper closed and classify the
@@ -1840,6 +2857,77 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
                     self._transition("REGRASP")
                 else:
                     self._transition("HOLD")
+
+        elif self._state == "GRIP_QUALITY_RECOVERY":
+            # Conditional seed-24 micro-recovery (Sprint 1 v1.9).
+            # The gripper is lowered a small amount and re-closed in the hope of
+            # engaging the lower part of the object that was missed because the
+            # object z was unusually low.
+            strategy = self._micro_recovery_strategy or "lower_reclose"
+            if strategy == "best_combined":
+                strategy = "lower_reclose"
+
+            recovery_delta_z = (
+                self._micro_recovery_z_adjust
+                if strategy == "z_adjust"
+                else self._micro_recovery_lower_delta_z
+            )
+            keep_gripper_closed = strategy in {"z_adjust", "lower_closed"}
+
+            if strategy == "reclose_hold":
+                # Hold the current EEF pose and keep the gripper closed for a few
+                # steps.  This is the least invasive recovery: it gives the gripper
+                # more time to settle around the object without changing position.
+                if not self._relative_mode and eef_pos is not None:
+                    self._apply_position(action, eef_pos, eef_quat, eef_pos)
+                action = self._set_gripper(action, open=False)
+                if self._state_step >= self._micro_recovery_reclose_steps:
+                    self._transition("LIFT_VERIFY")
+            elif strategy == "grip_verify":
+                # Diagnostic-only mode: just hold and observe.
+                if not self._relative_mode and eef_pos is not None:
+                    self._apply_position(action, eef_pos, eef_quat, eef_pos)
+                action = self._set_gripper(action, open=False)
+                if self._state_step >= self._micro_recovery_reclose_steps:
+                    self._transition("LIFT_VERIFY")
+            else:  # lower_reclose / z_adjust / lower_closed (or best_combined fallback)
+                if self._micro_recovery_step == 0:
+                    # Record the height at which we start recovery.
+                    self._micro_recovery_lower_target_z = (
+                        float(eef_pos[2].item()) - recovery_delta_z
+                        if eef_pos is not None
+                        else None
+                    )
+                half_steps = self._micro_recovery_reclose_steps // 2
+                if self._micro_recovery_step < half_steps:
+                    # Phase 1: lower while opening the gripper (unless z_adjust).
+                    target = eef_pos.clone() if eef_pos is not None else torch.zeros(3, device=device)
+                    if self._micro_recovery_lower_target_z is not None:
+                        target[2] = self._micro_recovery_lower_target_z
+                    self._apply_position(
+                        action,
+                        eef_pos,
+                        eef_quat,
+                        target,
+                        max_delta=self._max_lift_delta_z,
+                    )
+                    action = self._set_gripper(action, open=not keep_gripper_closed)
+                elif self._micro_recovery_step < self._micro_recovery_reclose_steps:
+                    # Phase 2: hold the lower pose and close.
+                    if self._micro_recovery_lower_target_z is not None and eef_pos is not None:
+                        target = eef_pos.clone()
+                        target[2] = self._micro_recovery_lower_target_z
+                        self._apply_position(action, eef_pos, eef_quat, target)
+                    action = self._set_gripper(action, open=False)
+                else:
+                    self._micro_recovery_attempts += 1
+                    self._micro_recovery_step = 0
+                    self._micro_recovery_lower_target_z = None
+                    if self._micro_recovery_attempts < self._micro_recovery_max_attempts:
+                        self._transition("LIFT_VERIFY")
+                    else:
+                        self._transition("LIFT")
+                self._micro_recovery_step += 1
 
         elif self._state == "REGRASP":
             # Open the gripper, retreat to a safe approach height, shift the
@@ -2051,6 +3139,72 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             if self._state_step >= self._min_release_steps:
                 self._transition("HOLD")
 
+        elif self._state == "SLIP_RECOVER_PAUSE":
+            # Hold position and gripper closed for a configurable pause to let
+            # the object settle.
+            if not self._relative_mode and eef_pos is not None:
+                self._apply_position(action, eef_pos, eef_quat, eef_pos)
+            action = self._set_gripper(action, open=False)
+            self._slip_recovery_pause_counter += 1
+            if self._slip_recovery_pause_counter >= self._slip_recovery_pause_steps:
+                self._slip_event_active = False
+                self._slip_consecutive_count = 0
+                self._slip_recovery_attempts += 1
+                self._slip_recovery_pause_counter = 0
+                resume = self._slip_recovery_resume_state or "HOLD"
+                self._transition(resume)
+
+        elif self._state == "SLIP_RECOVER_LOWER":
+            # Lower the gripper back toward the object to re-engage.
+            if self._slip_recovery_lower_target_z is None and eef_pos is not None:
+                self._slip_recovery_lower_target_z = float(eef_pos[2].item()) - self._slip_recovery_lower_delta_z
+            target = eef_pos.clone() if eef_pos is not None else torch.zeros(3, device=device)
+            target[2] = self._slip_recovery_lower_target_z or float(target[2].item())
+            self._apply_position(action, eef_pos, eef_quat, target, max_delta=self._max_lift_delta_z)
+            action = self._set_gripper(action, open=False)
+            if eef_pos is not None and abs(float(eef_pos[2].item()) - target[2].item()) < self._grasp_z_tolerance:
+                self._slip_event_active = False
+                self._slip_consecutive_count = 0
+                self._slip_recovery_attempts += 1
+                self._slip_recovery_lower_target_z = None
+                self._transition("GRASP")
+
+        elif self._state == "SLIP_RECOVER_PLACE_PUSH":
+            # Place the object back on the table and reorient while pressed.
+            object_yaw = self._extract_object_yaw(env, device)
+            target_yaw = self._quat_to_yaw(target_quat) if target_quat is not None else None
+            yaw_error = (
+                abs(self._angle_diff(target_yaw, object_yaw))
+                if target_yaw is not None and object_yaw is not None
+                else float("inf")
+            )
+
+            target = object_pos.clone() if object_pos is not None else (eef_pos.clone() if eef_pos is not None else torch.zeros(3, device=device))
+            target[2] = object_pos[2] + self._slip_recovery_place_push_z_offset if object_pos is not None else target[2]
+            self._apply_position(action, eef_pos, eef_quat, target, kp_multiplier=self._table_push_align_downward_kp)
+
+            if target_quat is not None and eef_quat is not None and not self._skip_broken_yaw_control:
+                original_yaw_step = self._yaw_step_size
+                self._yaw_step_size = self._slip_recovery_place_push_yaw_step
+                try:
+                    self._apply_orientation(action, eef_quat, target_quat)
+                finally:
+                    self._yaw_step_size = original_yaw_step
+
+            action = self._set_gripper(action, open=False)
+            self._slip_recovery_place_push_counter += 1
+
+            aligned = yaw_error < self._table_push_align_orientation_threshold
+            if (
+                (aligned and self._slip_recovery_place_push_counter >= self._slip_recovery_place_push_max_steps // 2)
+                or self._slip_recovery_place_push_counter >= self._slip_recovery_place_push_max_steps
+            ):
+                self._slip_event_active = False
+                self._slip_consecutive_count = 0
+                self._slip_recovery_attempts += 1
+                self._slip_recovery_place_push_counter = 0
+                self._transition("LIFT")
+
         elif self._state == "HOLD":
             # Goal-pose tasks normally keep the object grasped at the target pose.
             # Only open the gripper if an explicit release was requested/scheduled.
@@ -2092,12 +3246,321 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         if eef_yaw is not None and desired_eef_yaw is not None:
             eef_yaw_error = self._angle_diff(desired_eef_yaw, eef_yaw)
 
+        # Slip-forensic derived quantities (Sprint 1 v1.8).
+        object_height_delta: float | None = None
+        object_z_velocity: float | None = None
+        if object_pos is not None:
+            object_z = float(object_pos[2].item())
+            if self._initial_object_z is None:
+                self._initial_object_z = object_z
+            object_height_delta = object_z - self._initial_object_z
+            object_z_velocity = (
+                object_z - self._prev_object_z if self._prev_object_z is not None else 0.0
+            )
+            self._prev_object_z = object_z
+
+        object_eef_distance: float | None = None
+        if eef_pos is not None and object_pos is not None:
+            object_eef_distance = float(torch.linalg.norm(object_pos - eef_pos).item())
+
+        object_eef_yaw_delta: float | None = None
+        if object_yaw is not None and eef_yaw is not None:
+            object_eef_yaw_delta = abs(self._angle_diff(object_yaw, eef_yaw))
+
+        gripper_cmd: float | None = None
+        if action.numel() >= 1:
+            gripper_cmd = float(action[..., -1].item())
+
         # Rotational action components for axis calibration.
         action_rot_x = action_rot_y = action_rot_z = None
         if action.shape[-1] >= 6:
             action_rot_x = float(action[..., 3].item())
             action_rot_y = float(action[..., 4].item())
             action_rot_z = float(action[..., 5].item())
+
+        # --- Live grip-quality detection and seed-24 micro-recovery trigger ---
+        if (
+            self._enable_grip_quality_monitor
+            and self._grip_quality_monitor is not None
+            and self._state in ("GRASP", "CONTACT_VERIFY", "LIFT_VERIFY", "LIFT")
+            and not self._grip_quality_triggered
+            and self._micro_recovery_attempts < self._micro_recovery_max_attempts
+        ):
+            gq_record = {
+                "step": step,
+                "phase": self._state,
+                "object_z": float(object_pos[2].item()) if object_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "gripper_pos": float(gripper_pos.item()) if gripper_pos is not None else None,
+            }
+            self._grip_quality_signal = self._grip_quality_monitor.update(gq_record)
+            if self._grip_quality_debug_path:
+                try:
+                    with open(self._grip_quality_debug_path, "a", encoding="utf-8") as _gq_dbg:
+                        sig = self._grip_quality_signal
+                        _gq_dbg.write(
+                            f"step={step} phase={self._state} "
+                            f"obj_z={gq_record['object_z']} gripper={gq_record['gripper_pos']} "
+                            f"risk={sig.grip_failure_risk} trigger={sig.trigger_micro_recovery} "
+                            f"reason={sig.reason}\n"
+                        )
+                except Exception:
+                    pass
+            early_trigger = (
+                self._state in self._grip_quality_early_trigger_phases
+                and self._grip_quality_signal is not None
+                and self._grip_quality_signal.grip_failure_risk
+                >= self._grip_quality_early_trigger_risk_threshold
+                and not self._grip_quality_signal.trigger_micro_recovery
+                and (
+                    self._grip_quality_grasp_z_error_threshold <= 0.0
+                    or (
+                        self._last_gate_diagnostics is not None
+                        and self._last_gate_diagnostics.get("grasp_z_error", 0.0)
+                        > self._grip_quality_grasp_z_error_threshold
+                    )
+                )
+            )
+            if self._grip_quality_signal is not None and (
+                self._grip_quality_signal.trigger_micro_recovery or early_trigger
+            ):
+                if self._grip_quality_debug_path:
+                    try:
+                        with open(self._grip_quality_debug_path, "a", encoding="utf-8") as _gq_dbg:
+                            _gq_dbg.write(f"TRIGGER step={step} early={early_trigger}\n")
+                    except Exception:
+                        pass
+                self._grip_quality_triggered = True
+                self._transition("GRIP_QUALITY_RECOVERY")
+
+        # --- Live slip detection and recovery trigger (Sprint 6 v1.8) ---
+        if (
+            self._enable_slip_monitor
+            and self._slip_monitor is not None
+            and not self._slip_event_active
+            and self._slip_recovery_attempts < self._slip_recovery_max_attempts
+            and self._state in ("LIFT", "REORIENT", "ALIGN", "HOLD", "VERIFY_OBJECT_FOLLOWING")
+        ):
+            slip_record = {
+                "step": step,
+                "phase": self._state,
+                "object_z": float(object_pos[2].item()) if object_pos is not None else None,
+                "eef_z": float(eef_pos[2].item()) if eef_pos is not None else None,
+                "object_yaw": float(object_yaw) if object_yaw is not None else None,
+                "eef_yaw": float(eef_yaw) if eef_yaw is not None else None,
+                "target_yaw": float(target_yaw) if target_yaw is not None else None,
+                "object_x": float(object_pos[0].item()) if object_pos is not None else None,
+                "object_y": float(object_pos[1].item()) if object_pos is not None else None,
+                "eef_x": float(eef_pos[0].item()) if eef_pos is not None else None,
+                "eef_y": float(eef_pos[1].item()) if eef_pos is not None else None,
+            }
+            self._slip_trace.append(slip_record)
+            latest = self._slip_monitor.update(slip_record)
+            self._latest_slip_signal = latest
+            if latest is not None and latest.any_slip:
+                self._slip_consecutive_count += 1
+            else:
+                self._slip_consecutive_count = 0
+
+            if self._slip_consecutive_count >= self._slip_recovery_consecutive_steps:
+                self._slip_event_active = True
+                self._slip_recovery_resume_state = self._state
+                strategy = self._slip_recovery_strategy or "pause_stabilize"
+
+                if strategy == "best_combined":
+                    if target_yaw is not None and object_yaw is not None:
+                        yaw_err = abs(self._angle_diff(target_yaw, object_yaw))
+                        if yaw_err > self._slip_recovery_abort_yaw_threshold:
+                            strategy = "place_push_correct"
+                        elif self._slip_recovery_attempts == 0:
+                            strategy = "lower_regrip"
+                        else:
+                            strategy = "pause_stabilize"
+                    else:
+                        strategy = "pause_stabilize"
+
+                if strategy == "pause_stabilize":
+                    self._transition("SLIP_RECOVER_PAUSE")
+                elif strategy == "lower_regrip":
+                    self._transition("SLIP_RECOVER_LOWER")
+                elif strategy == "place_push_correct":
+                    self._transition("SLIP_RECOVER_PLACE_PUSH")
+                elif strategy == "abort_residual_yaw":
+                    self._slip_recovery_attempts += 1
+                    self._transition("HOLD")
+                else:
+                    self._transition("SLIP_RECOVER_PAUSE")
+        elif (
+            self._enable_slip_monitor
+            and self._slip_event_active
+            and self._slip_recovery_attempts >= self._slip_recovery_max_attempts
+        ):
+            # Max attempts exhausted: give up and hold.
+            self._transition("HOLD")
+
+        # --- Residual policy correction (Sprint 5 v1.9) ---
+        residual_delta_pos = [0.0, 0.0, 0.0]
+        residual_delta_rot = [0.0, 0.0, 0.0]
+        residual_delta_gripper = 0.0
+        residual_active_axes = [False] * 7
+        residual_confidence = 0.0
+        residual_reason = None
+        final_action = action
+        if (
+            self._enable_residual_policy
+            and self._residual_wrapper is not None
+            and self._residual_policy is not None
+            and self._state in self._residual_enabled_phases
+        ):
+            # Build observation dict from current state for residual predict.
+            obs = {}
+            if eef_pos is not None:
+                obs["eef_pos"] = eef_pos.detach().cpu().tolist()
+            if eef_quat is not None:
+                obs["eef_quat"] = eef_quat.detach().cpu().tolist()
+            if object_pos is not None:
+                obs["object_pos"] = object_pos.detach().cpu().tolist()
+            if gripper_pos is not None:
+                obs["gripper_pos"] = float(gripper_pos.item())
+            if target_pos is not None:
+                obs["target_pos"] = target_pos.detach().cpu().tolist()
+            if target_quat is not None:
+                obs["target_quat"] = target_quat.detach().cpu().tolist()
+
+            # Extract signal dicts from existing trace/observation data.
+            contact_signal = None
+            if self._contact_signal is not None:
+                contact_signal = {
+                    "contact_state": getattr(self._contact_signal, "contact_state", None),
+                    "contact_confidence": getattr(self._contact_signal, "contact_confidence", None),
+                    "reason": getattr(self._contact_signal, "reason", None),
+                }
+            slip_signal = None
+            if self._slip_monitor is not None and self._slip_trace:
+                latest_slip = self._slip_trace[-1]
+                slip_signal = {
+                    "slip_score": latest_slip.get("slip_score"),
+                    "slip_risk": "high" if latest_slip.get("slip_score", 0.0) > 2.0 else "low",
+                }
+            grip_quality_signal = None
+            if self._grip_quality_signal is not None:
+                gq = self._grip_quality_signal
+                grip_quality_signal = {
+                    "low_object_z": (
+                        getattr(gq, "object_z_at_grasp", 0.0) < self._grip_quality_object_z_low_threshold
+                        if hasattr(self, "_grip_quality_object_z_low_threshold")
+                        else False
+                    ),
+                    "gripper_too_open": (
+                        getattr(gq, "gripper_width_after_close", 1.0) > self._grip_quality_gripper_width_high_threshold
+                        if hasattr(self, "_grip_quality_gripper_width_high_threshold")
+                        else False
+                    ),
+                }
+
+            try:
+                # Convert action tensor to a flat list for the residual wrapper.
+                # Action tensors are often batch-shaped (1, action_dim), so
+                # ``tolist()`` returns ``[[...]]``; unwrap the outer list.
+                heuristic_action_list = action.detach().cpu().tolist()
+                if isinstance(heuristic_action_list, float):
+                    heuristic_action_list = [heuristic_action_list]
+                elif (
+                    isinstance(heuristic_action_list, list)
+                    and heuristic_action_list
+                    and isinstance(heuristic_action_list[0], list)
+                ):
+                    heuristic_action_list = heuristic_action_list[0]
+
+                final_action_list = self._residual_wrapper.compute_final_action(
+                    heuristic_action=heuristic_action_list,
+                    obs=obs,
+                    contact_signal=contact_signal,
+                    slip_signal=slip_signal,
+                    grip_quality_signal=grip_quality_signal,
+                    phase=self._state,
+                )
+                # Convert back to tensor.
+                final_action = torch.as_tensor(final_action_list, dtype=action.dtype, device=action.device)
+                # Clamp to action space shape.
+                if final_action.numel() > action.numel():
+                    final_action = final_action[: action.numel()]
+                elif final_action.numel() < action.numel():
+                    pad = torch.zeros(action.numel() - final_action.numel(), dtype=action.dtype, device=action.device)
+                    final_action = torch.cat([final_action, pad])
+                final_action = final_action.reshape(action.shape)
+
+                # Record residual metadata for trace.
+                from rosclaw_darwin.learning.residual_policy import ResidualAction
+                residual_action = self._residual_policy.predict(
+                    obs, contact_signal, slip_signal, grip_quality_signal, self._state
+                )
+                if isinstance(residual_action, ResidualAction):
+                    residual_delta_pos = residual_action.delta_pos
+                    residual_delta_rot = residual_action.delta_rot
+                    residual_delta_gripper = residual_action.delta_gripper
+                    residual_active_axes = residual_action.active_axes
+                    residual_confidence = residual_action.confidence
+                    residual_reason = residual_action.reason
+            except Exception as exc:
+                import sys
+                print(f"[RESIDUAL_POLICY] compute failed: {exc}", file=sys.stderr)
+                final_action = action
+
+        # Compute ContactSignal for contact-aware residual evolution (Sprint 2 v1.9).
+        contact_state: str | None = None
+        contact_confidence: float | None = None
+        contact_reason: str | None = None
+        contact_source: str | None = None
+        contact_normal_force_estimate: float | None = None
+        contact_object_eef_distance: float | None = None
+        contact_object_displacement: float | None = None
+        if (
+            self._enable_contact_signal
+            and self._contact_signal_provider is not None
+            and object_pos is not None
+            and eef_pos is not None
+            and gripper_pos is not None
+        ):
+            frame: dict[str, Any] = {
+                "step": step,
+                "phase": self._state,
+                "gripper_pos": gripper_pos,
+                "object_pos": object_pos,
+                "eef_pos": eef_pos,
+                "object_z": float(object_pos[2].item()),
+                "eef_z": float(eef_pos[2].item()),
+                "gripper_cmd": gripper_cmd,
+            }
+            grasp_start: dict[str, Any] | None = None
+            if self._grasp_start_object_pos is not None and self._grasp_start_eef_pos is not None:
+                grasp_start = {
+                    "object_pos": self._grasp_start_object_pos,
+                    "eef_pos": self._grasp_start_eef_pos,
+                }
+            try:
+                self._contact_signal = self._contact_signal_provider.compute_from_kinematics(
+                    frame, grasp_start=grasp_start
+                )
+                contact_state = self._contact_signal.contact_state
+                contact_confidence = self._contact_signal.contact_confidence
+                contact_reason = self._contact_signal.reason
+                contact_source = self._contact_signal.source
+                contact_normal_force_estimate = self._contact_signal.normal_force_estimate
+                contact_object_eef_distance = self._contact_signal.object_eef_distance
+                contact_object_displacement = self._contact_signal.object_displacement_from_grasp
+            except Exception as exc:
+                print(f"[CONTACT_SIGNAL] compute failed: {exc}", file=sys.stderr)
+
+        # Large-yaw route classifier diagnostic (Sprint 8 v1.10).
+        self._update_route_prediction(
+            object_pos=object_pos,
+            eef_pos=eef_pos,
+            gripper_pos=gripper_pos,
+            object_yaw_error=object_yaw_error,
+            object_eef_distance=object_eef_distance,
+            object_eef_yaw_delta=object_eef_yaw_delta,
+        )
 
         _append_trace({
             "episode": self._episode_idx,
@@ -2132,14 +3595,65 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             "action_rot_y": action_rot_y,
             "action_rot_z": action_rot_z,
             "contact_proxy": self._contact_proxy,
+            "contact_state": contact_state,
+            "contact_confidence": contact_confidence,
+            "contact_reason": contact_reason,
+            "contact_source": contact_source,
+            "contact_normal_force_estimate": contact_normal_force_estimate,
+            "contact_object_eef_distance": contact_object_eef_distance,
+            "contact_object_displacement": contact_object_displacement,
             "regrasp_attempt": self._regrasp_attempt_count,
             "grasp_effective": self._grasp_effective,
             "lift_response_z": self._lift_response_z,
+            "object_height_delta": object_height_delta,
+            "object_z_velocity": object_z_velocity,
+            "object_eef_distance": object_eef_distance,
+            "object_eef_yaw_delta": object_eef_yaw_delta,
+            "gripper_cmd": gripper_cmd,
+            "slip_recovery_attempts": self._slip_recovery_attempts,
+            "slip_event_active": self._slip_event_active,
+            "slip_recovery_strategy": self._slip_recovery_strategy,
+            "grip_quality_score": (
+                self._grip_quality_signal.grip_quality_score
+                if self._grip_quality_signal is not None
+                else None
+            ),
+            "grip_quality_trigger": self._grip_quality_triggered,
+            "grip_quality_failure_risk": (
+                self._grip_quality_signal.grip_failure_risk
+                if self._grip_quality_signal is not None
+                else None
+            ),
+            "grip_quality_reason": (
+                self._grip_quality_signal.reason
+                if self._grip_quality_signal is not None
+                else None
+            ),
+            "micro_recovery_triggered": self._grip_quality_triggered,
+            "micro_recovery_strategy": self._micro_recovery_strategy,
+            "micro_recovery_attempts": self._micro_recovery_attempts,
+            # Residual policy trace fields (Sprint 5 v1.9).
+            "residual_enabled": self._enable_residual_policy,
+            "residual_policy": self._residual_policy_name if self._enable_residual_policy else None,
+            "residual_delta_pos": residual_delta_pos,
+            "residual_delta_rot": residual_delta_rot,
+            "residual_delta_gripper": residual_delta_gripper,
+            "residual_active_axes": residual_active_axes,
+            "residual_confidence": residual_confidence,
+            "residual_reason": residual_reason,
+            # Route classifier diagnostic (Sprint 8 v1.10).
+            "route_prediction": self._route_prediction,
+            "route_confidence": self._route_confidence,
+            "final_action": (
+                final_action.detach().cpu().tolist()
+                if isinstance(final_action, torch.Tensor)
+                else list(final_action) if final_action is not None else None
+            ),
             "phase": self._state,
             **(self._last_gate_diagnostics or {}),
         })
 
-        return action
+        return final_action
 
     def _apply_position(
         self,
@@ -2196,6 +3710,81 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             return quat_rotate_inverse(eef_quat.unsqueeze(0), delta_world.unsqueeze(0)).squeeze()
         except Exception:
             return delta_world
+
+    def _update_route_prediction(
+        self,
+        object_pos: torch.Tensor | None,
+        eef_pos: torch.Tensor | None,
+        gripper_pos: torch.Tensor | None,
+        object_yaw_error: float | None,
+        object_eef_distance: float | None,
+        object_eef_yaw_delta: float | None,
+    ) -> None:
+        """Run the large-yaw route classifier and store the prediction for the trace.
+
+        This is a diagnostic-only signal (Sprint 8 v1.10).  The classifier does
+        not alter the action; it labels each frame with the most appropriate
+        recovery route so that offline analysis can compare route distribution
+        against actual outcomes.
+        """
+        self._route_prediction = None
+        self._route_confidence = None
+        if not self._enable_route_classifier or self._route_classifier is None:
+            return
+        try:
+            import numpy as np
+
+            try:
+                from route_classifier import ROUTE_CLASSES
+            except Exception:
+                from rosclaw_darwin.learning.route_classifier import ROUTE_CLASSES
+
+            feature_values: dict[str, float] = {name: 0.0 for name in self._route_classifier.feature_names}
+            phase = self._state
+            if phase in feature_values:
+                feature_values[phase] = 1.0
+
+            feature_values["object_z"] = float(object_pos[2].item()) if object_pos is not None else 0.0
+            feature_values["gripper_pos"] = float(gripper_pos.item()) if gripper_pos is not None else 0.0
+            feature_values["eef_z"] = float(eef_pos[2].item()) if eef_pos is not None else 0.0
+            feature_values["orientation_error"] = float(object_yaw_error) if object_yaw_error is not None else 0.0
+            feature_values["object_eef_distance"] = float(object_eef_distance) if object_eef_distance is not None else 0.0
+            feature_values["object_eef_yaw_delta"] = float(object_eef_yaw_delta) if object_eef_yaw_delta is not None else 0.0
+
+            gq = self._grip_quality_signal
+            if gq is not None:
+                feature_values["gripper_too_open"] = float(
+                    getattr(gq, "gripper_width_after_close", 1.0) > self._grip_quality_gripper_width_high_threshold
+                )
+                feature_values["low_object_z"] = float(
+                    getattr(gq, "object_z_at_grasp", 1.0) < self._grip_quality_object_z_low_threshold
+                )
+
+            latest_slip = getattr(self, "_latest_slip_signal", None)
+            if latest_slip is not None:
+                feature_values["any_slip"] = float(getattr(latest_slip, "any_slip", False))
+                feature_values["slip_score"] = float(getattr(latest_slip, "slip_score", 0.0))
+
+            contact = getattr(self, "_contact_signal", None)
+            if contact is not None:
+                feature_values["contact_confidence"] = float(getattr(contact, "contact_confidence", 0.0))
+                cs = getattr(contact, "contact_state", "unknown")
+                feature_values["has_contact"] = float(cs in {"stable", "contact", "grasp"})
+
+            X = np.array(
+                [[feature_values.get(name, 0.0) for name in self._route_classifier.feature_names]],
+                dtype=np.float32,
+            )
+            probs = self._route_classifier.predict_proba(X)[0]
+            pred_idx = int(np.argmax(probs))
+            self._route_prediction = ROUTE_CLASSES[pred_idx]
+            self._route_confidence = float(probs[pred_idx])
+        except Exception as exc:
+            msg = f"[ROUTE_CLASSIFIER] prediction failed: {exc}"
+            print(msg, file=sys.stderr)
+            _trace_log(msg)
+            import traceback
+            _trace_log(traceback.format_exc())
 
     def _extract_target_quat_world(
         self, observation: GymSpacesDict, env: gym.Env, device: torch.device
@@ -2298,6 +3887,45 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
             return pos_b.squeeze(), quat_b.squeeze()
         except Exception:
             return pos_w, quat_w
+
+    def _pre_grasp_target_quat(
+        self,
+        object_yaw: float,
+        eef_quat: torch.Tensor | None,
+        env: gym.Env,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        """Return the base-frame target quaternion that aligns the gripper with the object's yaw.
+
+        The object yaw is observed in the world frame, while the absolute-mode
+        controller expects base-frame commands.  The target preserves the
+        gripper's downward-pointing roll (roll = pi) and only changes the yaw
+        angle; a pure-yaw quaternion would try to flip the gripper upright and
+        fails to converge in the pre-grasp window.  After converting to the base
+        frame we pick the quaternion sign that gives the shortest rotation from
+        the current end-effector orientation.
+        """
+        desired_yaw = object_yaw + self._grasp_target_yaw_offset
+        # Quaternion for roll=pi, pitch=0, yaw=desired_yaw in the world frame.
+        target_quat_w = torch.tensor(
+            [
+                math.cos(desired_yaw / 2.0),
+                math.sin(desired_yaw / 2.0),
+                0.0,
+                0.0,
+            ],
+            device=device,
+            dtype=eef_quat.dtype if eef_quat is not None else torch.float32,
+        )
+        _, target_quat_b = self._world_pose_to_base(
+            torch.zeros(3, device=device, dtype=target_quat_w.dtype),
+            target_quat_w,
+            env,
+            device,
+        )
+        if eef_quat is not None and torch.dot(target_quat_b, eef_quat).item() < 0.0:
+            target_quat_b = -target_quat_b
+        return target_quat_b
 
     def _apply_orientation(
         self,
@@ -2452,6 +4080,24 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         except Exception:
             return True
 
+    def _should_table_push_align(
+        self,
+        target_quat: torch.Tensor | None,
+        object_yaw: float | None,
+    ) -> bool:
+        """Return True if the target yaw is large enough to use table push-align.
+
+        Table push-align is only beneficial when there is a substantial yaw
+        discrepancy to resolve; otherwise the normal LIFT/REORIENT path is fine.
+        """
+        if target_quat is None:
+            return False
+        if object_yaw is None:
+            return True
+        target_yaw = self._quat_to_yaw(target_quat)
+        yaw_error = abs(self._angle_diff(target_yaw, object_yaw))
+        return yaw_error >= self._table_push_align_min_yaw_error
+
     def _classify_contact_proxy(
         self,
         gripper_pos: torch.Tensor | None,
@@ -2575,6 +4221,42 @@ class HeuristicServoGoalPosePolicy(HeuristicServoLiftPolicy):
         self._contact_proxy = "unknown"
         self._grasp_effective = False
         self._lift_response_z = 0.0
+        # Forensic state for slip analysis (Sprint 1 v1.8).
+        self._initial_object_z: float | None = None
+        self._prev_object_z: float | None = None
+        # Reset large-yaw table push-align alignment counter.
+        self._table_push_align_aligned_steps = 0
+
+        # Reset closed-loop slip-aware recovery state (Sprint 6 v1.8).
+        if self._slip_monitor is not None:
+            self._slip_monitor.reset()
+        self._slip_trace = []
+        self._slip_consecutive_count = 0
+        self._slip_event_active = False
+        self._slip_recovery_attempts = 0
+        self._slip_recovery_pause_counter = 0
+        self._slip_recovery_place_push_counter = 0
+        self._slip_recovery_resume_state = None
+        self._slip_recovery_lower_target_z = None
+        self._latest_slip_signal = None
+
+        # Reset route classifier diagnostic state (Sprint 8 v1.10).
+        self._route_prediction = None
+        self._route_confidence = None
+
+        # Reset conditional seed-24 micro-recovery state (Sprint 1 v1.9).
+        if self._grip_quality_monitor is not None:
+            self._grip_quality_monitor.reset()
+        self._grip_quality_signal = None
+        self._grip_quality_triggered = False
+        self._micro_recovery_attempts = 0
+        self._micro_recovery_step = 0
+        self._micro_recovery_lower_target_z = None
+
+        # Reset ContactSignal provider state (Sprint 2 v1.9).
+        if self._contact_signal_provider is not None:
+            self._contact_signal_provider.reset()
+        self._contact_signal = None
 
     @staticmethod
     def from_args(args: argparse.Namespace) -> "HeuristicServoGoalPosePolicy":

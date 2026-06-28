@@ -25,7 +25,7 @@ def test_precision_alignment_overrides_stronger_lift():
             ),
         ]
     )
-    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap", "object_not_lifted"])
+    hints, _, _, _, _, _ = registry.select_hints(["final_alignment_gap", "object_not_lifted"])
     assert "precision_target_tracking" in hints
     # stronger_lift / faster_approach are incompatible with slow_final_align.
     assert "stronger_lift" not in hints
@@ -51,7 +51,7 @@ def test_unstable_grasp_blocks_faster_movement():
             ),
         ]
     )
-    hints, _, _, _, _ = registry.select_hints(["not_reached", "unstable_grasp"])
+    hints, _, _, _, _, _ = registry.select_hints(["not_reached", "unstable_grasp"])
     # Stable grasp has higher precedence; its hints survive.
     assert "longer_squeeze" in hints
     assert "reduce_xy_motion" in hints
@@ -79,7 +79,7 @@ def test_orientation_gap_before_target_tracking():
             ),
         ]
     )
-    hints, _, _, _, _ = registry.select_hints(["final_alignment_gap", "orientation_gap"])
+    hints, _, _, _, _, _ = registry.select_hints(["final_alignment_gap", "orientation_gap"])
     # Orientation_gap currently has lower precedence than final_alignment_gap in
     # the default list; both hints should still be present because they are not
     # declared incompatible.

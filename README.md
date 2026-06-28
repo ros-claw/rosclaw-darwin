@@ -1,30 +1,39 @@
 # ROSClaw-Darwin
 
-**Evolutionary Benchmark Layer for Embodied Agents**
+**Evidence engine for evolving physical policies safely.**
 
-ROSClaw-Darwin does not replace IsaacLab-Arena.
-It extends Arena with task evolution, memory-aware evaluation, and evolution metrics.
+ROSClaw-Darwin turns every proposed robot-policy change into auditable evidence:
 
-- **IsaacLab-Arena** answers: *Can this policy solve this task?*
-- **ROSClaw-Darwin** answers: *Can this agent learn from failure and solve increasingly complex task families?*
+1. Is the benchmark environment valid?
+2. What failure does the baseline exhibit?
+3. Does the candidate intervention rescue failures?
+4. Does the candidate introduce regressions?
+5. What promotion level does the evidence support?
+6. What claims are allowed, and what claims are blocked?
 
-## What is ROSClaw-Darwin?
+It does **not** promise to fix every robot failure. It promises that any claim about a fix is backed by structured evidence and cannot be inflated beyond what the data supports.
 
-ROSClaw-Darwin 是一个面向 Physical AI / Embodied Agent 的进化型评测框架。
+## What problem does Darwin solve?
 
-传统 Benchmark 评估：机器人现在有多强  
-ROSClaw-Darwin 评估：机器人能否从失败中学习，并在越来越复杂的任务中持续变强
+Before Darwin, a typical workflow looked like:
 
-## Relationship with External Projects
+> "I changed the policy and the success rate went up on my seed set. Let's merge it."
 
-| Project | Role in Darwin |
-|---------|----------------|
-| IsaacLab-Arena | 主执行底座（Scene / Embodiment / Task / Runner） |
-| LW-BenchHub | 第一批可运行任务种子（kitchen, loco-manipulation, multi-robot） |
-| RoboTwin IsaacLab-Arena Branch | 双臂操作与强 domain randomization 任务来源 |
-| BEHAVIOR-1K | long-horizon task ontology / task genome 来源（语义导入） |
+This is dangerous because it conflates:
 
-## Quickstart with MockAdapter
+- Raw success-rate improvements with **no-regression guarantees**.
+- Single-seed fixes with **transferable skills**.
+- Invalid environments with **policy failures**.
+- External limitations with **solvable bugs**.
+
+Darwin replaces this with an evidence pipeline:
+
+```
+Validate environment → run baseline → diagnose failures → evaluate candidate
+→ compare baseline vs candidate → decide promotion level → generate evidence card → expose result.
+```
+
+## Quickstart
 
 ```bash
 # Install
@@ -33,119 +42,79 @@ pip install -e ".[dev]"
 # Check environment
 darwin doctor
 
-# Validate a task
-darwin validate-task examples/tasks/open_fridge_take_milk.yaml
+# Validate a benchmark environment
+darwin validate-env --task configs/tasks/goal_pose_dex_cube_official.yaml --out demo_outputs/validity --mock
 
-# Run mock evaluation
-darwin run --adapter mock --task examples/tasks/open_fridge_take_milk.yaml --policy configs/policies/zero_action.yaml --episodes 20
+# Run a paired no-regression evaluation
+darwin pair-eval \
+  --task configs/tasks/goal_pose_dex_cube_official.yaml \
+  --baseline configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml \
+  --candidate configs/policies/heuristic_servo_goal_pose_v3_seed24_micro_recovery.yaml \
+  --seeds 0:4 --out demo_outputs/pair_seed24 --mock
 
-# Run evolution evaluation
-darwin evolve --adapter mock --task examples/tasks/open_fridge_take_milk.yaml --policy configs/policies/zero_action.yaml --loops 2
+# Generate an evidence card
+darwin card --candidate seed24_micro_recovery --out demo_outputs/cards --mock
 
-# Generate task variations
-darwin mutate --task examples/tasks/open_fridge_take_milk.yaml --n 20 --out data/tasks/mutated
+# Register a promoted recovery
+darwin registry add --registry demo_outputs/registry \
+  --name seed24_micro_recovery \
+  --card demo_outputs/cards/seed24_micro_recovery.card.yaml
 
-# Compose long-horizon tasks
-darwin compose examples/tasks/open_fridge.yaml examples/tasks/pick_milk.yaml examples/tasks/close_fridge.yaml --out data/tasks/composed/open_pick_close.yaml
-
-# Start dashboard
+# Start the dashboard
 darwin dashboard --data data --port 8080
 ```
 
-## Import Tasks
+See [`demo_pack/commands.sh`](demo_pack/commands.sh) for a full smoke demo.
 
-```bash
-# LW-BenchHub
-darwin import lw --repo /data/repos/LW-BenchHub --out data/tasks/lw --limit 30
+## Core workflow
 
-# RoboTwin
-darwin import robotwin --repo /data/repos/RoboTwin --out data/tasks/robotwin --limit 20
+| Step | CLI command | Output |
+|---|---|---|
+| Validate environment | `darwin validate-env` | `task_validity.json` |
+| Run baseline/candidate | `darwin run` | run artifacts |
+| Diagnose failures | `darwin diagnose` | `failure_signature.json` |
+| Paired no-regression eval | `darwin pair-eval` | `paired_summary.json` |
+| Decide promotion | `darwin promote` | `promotion_decision.json` |
+| Generate evidence card | `darwin card` | `{candidate}.card.yaml` + `.card.md` |
+| Register result | `darwin registry add` | `registry.json` |
+| Bundle report | `darwin report` | `report_index.json` |
 
-# BEHAVIOR-1K (semantic only)
-darwin import behavior1k --repo /data/repos/BEHAVIOR-1K --semantic-only --out data/tasks/behavior1k --limit 100
-```
+## Evidence levels
 
-## Metrics Explanation
+| Level | Meaning |
+|---|---|
+| `experimental_only` | Runnable component, no measured live gain. |
+| `candidate_recovery` | Paired no-regression evidence, rescued > 0 seeds. |
+| `validated_recovery` | Candidate recovery + independent replication. |
+| `validated_transferable_skill` | Validated recovery + cross-task/object evidence. |
+| `blocked_external` | Outside current system capability. |
+| `diagnosis_only` | Problem identified, no automatic fix. |
+| `human_escalation` | Requires human review. |
 
-### Traditional Metrics
-- `success_rate`: 成功率
-- `completion_time_mean`: 平均完成时间
-- `collision_count_mean`: 平均碰撞次数
+## What Darwin does not claim
 
-### Evolution Metrics
-- `delta_success_rate`: 两次 loop 间的成功率变化
-- `memory_integration_efficiency`: 记忆整合效率（重复错误减少程度）
-- `skill_discovery_rate`: 新技能发现率
-- `robustness_gain`: 鲁棒性提升
-- `evolution_score`: 综合进化得分
-
-```
-evolution_score =
-  0.4 * delta_success_rate
-  + 0.2 * memory_integration_efficiency
-  + 0.2 * skill_discovery_rate
-  + 0.1 * completion_time_improvement
-  + 0.1 * robustness_gain
-```
-
-## Dashboard
-
-Darwin Dashboard 提供以下页面：
-
-- `/` — Overview
-- `/runs` — Evaluation runs
-- `/evolution` — Evolution reports
-- `/tasks` — Task registry
-- `/task-graph` — Task lineage graph
-- `/skills` — Skill discovery registry
-- `/failures` — Failure taxonomy and frequency
-- `/leaderboard` — Evolution leaderboard（按 evolution_score 排序）
+- It does not automatically solve all robot tasks.
+- It does not prove transferable skills without cross-task evidence.
+- It does not solve large-yaw torsional slip (currently `blocked_external`).
+- Its results are not official Arena leaderboard results unless explicitly accepted.
+- It does not replace RL training.
 
 ## Architecture
 
-```
-Task Sources
-  -> ROSClaw-TDL
-  -> Task Graph
-  -> Task Genome Engine
-  -> Arena / Mock / RoboTwin Adapter
-  -> Evolution Runner
-  -> Practice / Memory / How Bridge
-  -> Evolution Metrics
-  -> Dashboard / Leaderboard
-```
+See [`docs/DARWIN_ARCHITECTURE.md`](docs/DARWIN_ARCHITECTURE.md).
 
-## Directory Structure
+## Development
 
-```
-rosclaw-darwin/
-├── rosclaw_darwin/
-│   ├── cli/           # Typer CLI
-│   ├── tdl/           # Task Definition Language
-│   ├── sources/       # Importers (LW, RoboTwin, BEHAVIOR-1K)
-│   ├── adapters/      # Environment adapters (mock, arena)
-│   ├── evaluation/    # Metrics and results
-│   ├── evolution/     # Genome, mutators, composer, runner
-│   ├── integration/   # Practice / Memory / How / Know bridges
-│   ├── dashboard/     # FastAPI dashboard
-│   └── utils/         # Helpers
-├── examples/tasks/    # Example TDL tasks
-├── configs/           # Configurations
-├── tests/             # Pytest suite
-└── docs/              # Documentation
+```bash
+ruff check rosclaw_darwin tests scripts
+pytest tests/unit -q
+pytest tests/integration -q
+python scripts/quality/run_darwin_v1_release_gate.py
 ```
 
-## Roadmap
+## Release package
 
-- [x] Phase 0: 仓库骨架
-- [x] Phase 1: TDL + MockAdapter + Metrics
-- [x] Phase 2: Task Genome Engine
-- [x] Phase 3: Evolution Runner + Memory/Skill MVP
-- [ ] Phase 4: IsaacLab-Arena Adapter (subprocess runner)
-- [ ] Phase 5: LW-BenchHub Importer (full scanning)
-- [ ] Phase 6: RoboTwin Importer (full scanning)
-- [ ] Phase 7: BEHAVIOR-1K Semantic Importer (BDDL parsing)
-- [x] Phase 8: Dashboard MVP
+The v1.0 release package is in [`release/darwin_v1/`](release/darwin_v1/).
 
 ## License
 

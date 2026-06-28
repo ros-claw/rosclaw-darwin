@@ -54,13 +54,51 @@
 - [Final Darwin v1.6 Status Report](FINAL_DARWIN_V16_STATUS_REPORT.md) — Level A/B/C/D evidence summary.
 - [V1.6 Evidence Reconciliation Report](V16_EVIDENCE_RECONCILIATION_REPORT.md) — re-classification of v1.6 results into official / promoted / invalid / experimental buckets.
 - [Dex-Cube Goal Pose 100-Seed Post-Reachability Report](DEX_CUBE_GOAL_POSE_100_SEED_POST_REACHABILITY_REPORT.md) — v1.7 official 100-seed validation with the promoted reachability config.
-- [Procedural Object Validity Audit Report](PROCEDURAL_OBJECT_VALIDITY_AUDIT_REPORT.md) — object-state audit before OOD skill evaluation.
+- [Seed 24 Post-Lift Slip Forensics Report](SEED24_POST_LIFT_SLIP_FORENSICS_REPORT.md) — 10-repeat deterministic failure analysis of the only remaining official failure.
+- [Seed 24 Fix and Official Regression Report](SEED24_FIX_AND_OFFICIAL_REGRESSION_REPORT.md) — minimal `pre_grasp_orient` fix, focused ablation, and official 0:99 / 100:199 regression results.
+- [Valid OOD Cube Benchmark Construction Report](VALID_OOD_CUBE_BENCHMARK_CONSTRUCTION_REPORT.md) — local, collision-enabled OOD cube variants and the validity gate that unlocks Sprint 4.
+- [Valid OOD Object Geometry Adapter Report](VALID_OOD_OBJECT_GEOMETRY_ADAPTER_REPORT.md) — Sprint 4 baseline vs size/mass/friction/structural adaptation on the valid OOD cube benchmark.
+- [Closed-Loop Large-Yaw Slip Monitor Validation Report](SLIP_MONITOR_VALIDATION_REPORT.md) — Sprint 5 kinematic slip detection tuned and validated on v1.7 large-yaw traces.
+- [Slip-Aware Recovery Ablation Report](SLIP_AWARE_RECOVERY_ABLATION_REPORT.md) — Sprint 6 closed-loop slip recovery strategies on large-yaw goal_pose.
+- [FailureToHint v3.2 Recovery Policy Report](FAILURE_TO_HINT_V32_RECOVERY_POLICY_REPORT.md) — recovery-policy schema and wiring for closed-loop interventions.
+- [FailureToHint v3.3 Route Selection Report](FAILURE_TO_HINT_V33_ROUTE_SELECTION_REPORT.md) — v1.9 Sprint 8: explicit recovery routes and claim levels to avoid false recovery claims.
+- [Final Darwin v1.9 Status Report](FINAL_DARWIN_V19_STATUS_REPORT.md) — Level A/B/C/D evidence summary for v1.9; all sprints complete.
+
+## v1.10 — Paired evidence, small learned residual, valid OOD adaptation, FTH v3.4
+
+- [Milestone: v1.9 Contact-Aware Residual Infrastructure Frozen](MILESTONE_DARWIN_V19_CONTACT_RESIDUAL_INFRASTRUCTURE.md) — frozen artifacts that v1.10 builds upon.
+- [Paired No-Regression Evaluation Protocol](PAIRED_EVALUATION_PROTOCOL_REPORT.md) — per-seed paired evaluation protocol used for all v1.10 candidate claims.
+- [Seed24 Micro-Recovery Paired No-Regression Report](SEED24_MICRO_RECOVERY_PAIRED_NO_REGRESSION_REPORT.md) — Sprint 1 baseline-vs-candidate paired audit for the conditional seed-24 micro-recovery.
+- [ContactSignal Reliability Audit Report](CONTACT_SIGNAL_RELIABILITY_AUDIT_REPORT.md) — Sprint 2 multi-phase ContactSignal coverage and legacy-proxy agreement audit.
+- [Residual Dataset v2 Construction Report](RESIDUAL_DATASET_V2_CONSTRUCTION_REPORT.md) — Sprint 3 v2 dataset schema, builder, paired/route/medium-OOD labels.
+- [Learned Trigger Model Report](LEARNED_TRIGGER_MODEL_REPORT.md) — Sprint 4 small trigger classifier, training CLI, and evaluation metrics.
+- [Learned Bounded Residual Micro-Policy Report](LEARNED_BOUNDED_RESIDUAL_MICRO_POLICY_REPORT.md) — Sprint 5 small bounded residual regressor, offline replay safety gates, and tests.
+- [Valid OOD Medium-Task Selection Report](VALID_OOD_MEDIUM_TASK_SELECTION_REPORT.md) — Sprint 6 mining of 20%–80% baseline-success OOD tasks for learned adaptation.
+- [Valid OOD Learned Adaptation Benchmark Report](VALID_OOD_LEARNED_ADAPTATION_BENCHMARK_REPORT.md) — Sprint 7 paired benchmark with learned trigger / bounded residual / FTH v3.3 route selection.
 - [Procedural Object Validity Repair Report](PROCEDURAL_OBJECT_VALIDITY_REPAIR_REPORT.md) — repairs applied after the validity audit.
 - [Procedural OOD Recovery After Validity Report](PROCEDURAL_OOD_RECOVERY_AFTER_VALIDITY_REPORT.md) — adaptive recovery ablation only if validity passes.
 - [Large-Yaw Slip Mechanism Report](LARGE_YAW_SLIP_MECHANISM_REPORT.md) — yaw-coupling diagnosis for π/2 and 2π/3 target yaws.
-- [Large-Yaw Targeted Intervention Report](LARGE_YAW_TARGETED_INTERVENTION_REPORT.md) — grasp-at-target-yaw and low-height-incremental-yaw ablations.
+- [Large-Yaw Targeted Intervention Report](LARGE_YAW_TARGETED_INTERVENTION_REPORT.md) — grasp-at-target-yaw, low-height-incremental-yaw, and table push-align (base + tuned) ablations; all structural hypotheses rejected.
+- [Large-Yaw Route Policy Feasibility Report](LARGE_YAW_ROUTE_POLICY_FEASIBILITY_REPORT.md) — v1.10 Sprint 8: route classifier loads, logs predictions, and is trained on the v2 dataset, but only `continue` and `blocked_external` labels exist; the three intermediate routes are unlearnable without additional labels, so large-yaw remains `blocked_external`.
+- [FailureToHint v3.4 Evidence-Aware Promotion Report](FAILURE_TO_HINT_V34_EVIDENCE_AWARE_PROMOTION_REPORT.md) — v1.10 Sprint 9: `EvidenceStatus`, `PromotionManager`, and evidence gates that prevent false recovery promotion.
+- [Approach-Collision Failure Diagnosis Report](APPROACH_COLLISION_DIAGNOSIS_REPORT.md) — independent FTH v3.4 diagnosis route that separates approach-collision failures from the grip-quality micro-recovery evidence pool.
 - [Final Darwin v1.7 Status Report](FINAL_DARWIN_V17_STATUS_REPORT.md) — Level A/B/C/D evidence summary for v1.7.
+- [Final Darwin v1.8 Status Report](FINAL_DARWIN_V18_STATUS_REPORT.md) — Level A/B/C/D evidence summary for v1.8; official line stays at 99/100.
+- [Final Darwin v1.10 Status Report](FINAL_DARWIN_V20_STATUS_REPORT.md) — Level A/B/C/D evidence summary for v1.10; honest verdicts and remaining next steps.
+- [Seed 24 Conditional Micro-Recovery Report](SEED24_CONDITIONAL_MICRO_RECOVERY_REPORT.md) — v1.9 Sprint 1: conditional seed-24 micro-recovery design, gating, and audit results.
+- [ContactSignal Abstraction Report](CONTACT_SIGNAL_ABSTRACTION_REPORT.md) — v1.9 Sprint 2: unified `ContactSignal` schema, provider, container fallback, and policy integration.
+- [Residual Dataset Construction Report](RESIDUAL_DATASET_CONSTRUCTION_REPORT.md) — v1.9 Sprint 3: convert traces into a residual-learning dataset with stratified splits and sample weights.
+- [Residual Policy Offline Replay Report](RESIDUAL_POLICY_OFFLINE_REPLAY_REPORT.md) — v1.9 Sprint 4: bounded residual policy wrapper and offline replay validation.
+- [Residual Policy Arena Pilot Report](RESIDUAL_POLICY_ARENA_PILOT_REPORT.md) — v1.9 Sprint 5: Arena residual policy pilot for seed24_guard and slip_guard.
+- [Darwin v1.7 Follow-up Implementation Report](V1_7_FOLLOW_UP_IMPLEMENTATION_REPORT.md) — complete Sprint-by-Sprint implementation report against `darwin后续实施大纲v1_7.md`.
+- [v1.7 Official GoalPose Breakthrough Milestone](MILESTONE_DARWIN_V17_OFFICIAL_GOALPOSE_BREAKTHROUGH.md) — frozen milestone evidence for v1.7.
+- [v1.7 Milestone and Escalation Report](V17_MILESTONE_AND_ESCALATION_REPORT.md) — milestone summary + ready-to-submit Arena escalation packages.
 - [Arena Issue Tracker](ARENA_ISSUE_TRACKER.md) — consolidated P0/P1/P2 questions for the IsaacLab-Arena team and simulation experts.
+
+## External review packages
+
+- [Procedural Cube Fallback Invalidity Escalation](../external_reviews/procedural_cube_fallback_invalidity_escalation.md) — ready-to-submit Arena escalation package for the invalid procedural fallback object.
+- [Large-Yaw Torsional Slip Escalation](../external_reviews/large_yaw_torsional_slip_escalation.md) — ready-to-submit Arena escalation package for large-yaw in-hand torsional slip; all open-loop interventions rejected.
 
 ## Evolution and ablation
 

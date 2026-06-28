@@ -1,17 +1,24 @@
 {% extends "base.html" %}{% block title %}Overview - ROSClaw-Darwin{% endblock %}{% block content %}
-<div class="card"><h1>🏆 ROSClaw-Darwin Overview</h1><p>Evolutionary Embodied Intelligence Benchmark.</p></div>
+<div class="card"><h1>🏆 ROSClaw-Darwin v1.0</h1><p>Evidence engine for evolving physical policies safely.</p></div>
+
+<div class="card"><h2>Product Status</h2>
+<table><tr><th>Capability</th><th>Status</th><th>Evidence</th></tr>
+<tr><td>Validity Gate</td><td><span class="badge badge-success">v1.0</span></td><td>Procedural fallback blocked as invalid environment.</td></tr>
+<tr><td>Paired No-Regression Evaluator</td><td><span class="badge badge-success">v1.0</span></td><td>Seed 24 micro-recovery: 2 rescued, 0 newly failed.</td></tr>
+<tr><td>Failure Diagnosis</td><td><span class="badge badge-success">v1.0</span></td><td>Seed 24 slip, large-yaw slip, procedural invalidity.</td></tr>
+<tr><td>Promotion Decision Engine</td><td><span class="badge badge-success">v1.0</span></td><td>FTH v3.4 + paired evidence gate.</td></tr>
+<tr><td>Promotion Registry</td><td><span class="badge badge-success">v1.0</span></td><td>seed24_micro_recovery registered as candidate_recovery.</td></tr>
+<tr><td>Evidence Card Generator</td><td><span class="badge badge-success">v1.0</span></td><td>5 demo cards in cards/.</td></tr>
+<tr><td>Unified CLI</td><td><span class="badge badge-success">v1.0</span></td><td>rosclaw darwin &lt;subcommand&gt; with --mock.</td></tr>
+<tr><td>Dashboard</td><td><span class="badge badge-success">v1.0</span></td><td>Product views below.</td></tr>
+<tr><td>Learned Trigger + Bounded Residual</td><td><span class="badge">experimental</span></td><td>Safe, no seeds rescued.</td></tr>
+<tr><td>Transferable Skill</td><td><span class="badge badge-fail">not proven</span></td><td>No cross-task/object evidence yet.</td></tr>
+</table></div>
+
 <div class="card"><h2>Quick Stats</h2><table><tr><th>Metric</th><th>Value</th></tr>
 <tr><td>Total Runs</td><td class="metric">{{ runs|length }}</td></tr>
-<tr><td>Evolution Runs</td><td class="metric">{{ evolution_runs|length }}</td></tr>
-<tr><td>Tasks</td><td class="metric">{{ tasks|length }}</td></tr>
-<tr><td>Discovered Skills</td><td class="metric">{{ skills|length }}</td></tr>
-<tr><td>Skill Candidates</td><td class="metric">{{ candidates|length }}</td></tr>
-<tr><td>Experiences</td><td class="metric">{{ memories|length }}</td></tr>
+<tr><td>Evidence Cards</td><td class="metric">{{ cards|length }}</td></tr>
+<tr><td>Registry Entries</td><td class="metric">{{ registry_count }}</td></tr>
+<tr><td>Blocked External</td><td class="metric">{{ blocked_count }}</td></tr>
 </table></div>
-<div class="card"><h2>Leaderboard Top 5</h2>
-{% if leaderboard %}<table><tr><th>Rank</th><th>Task</th><th>Score</th><th>Δ Success</th><th>MIE</th></tr>
-{% for entry in leaderboard[:5] %}<tr class="rank-{{ loop.index }}"><td>#{{ loop.index }}</td><td>{{ entry.task_id }}</td><td class="metric">{{ "%.4f"|format(entry.evolution_score) }}</td><td class="metric">{{ "%.4f"|format(entry.delta_success_rate) }}</td><td class="metric">{{ "%.4f"|format(entry.memory_integration_efficiency_score) }}</td></tr>
-{% endfor %}</table>
-{% else %}<p>No evolution runs yet.</p>
-{% endif %}</div>
 {% endblock %}

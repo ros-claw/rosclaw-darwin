@@ -14,6 +14,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
+from rosclaw_darwin.evolution.recovery_hint import RecoveryPolicy
+
 
 class HintRecipe(BaseModel):
     """A reusable mapping from failure-signature tags to adaptive hints."""
@@ -25,11 +27,21 @@ class HintRecipe(BaseModel):
     parameter_overrides: dict[str, Any] = {}
     structural_overrides: dict[str, Any] = {}
     strategy_switches: list[str] = []
+    recovery_policy: RecoveryPolicy | None = None
     confidence: float = 0.0
     rationale: str | None = None
     expected_effect: str | None = None
     validated_tasks: list[str] = []
     hint_level: str = "local_adaptive_hint"  # local_adaptive_hint | skill_candidate | validated_transferable_skill
+
+    # v3.3 route/claim metadata: honest labeling of what the recipe can claim.
+    route_selection: str | None = None  # conditional_micro_recovery | abort_safe | human_escalation | diagnosis_only | blocked_external
+    monitor: str | None = None  # grip_quality_monitor | slip_monitor | contact_signal_provider
+    claim_level: str = "recovery_candidate"  # diagnosis_only | recovery_candidate | validated
+    promotion_status: str = "experimental"  # experimental | boundary_recovery_candidate | validated_transferable_skill | blocked_external
+
+    # v3.4 evidence gate: requirements that must be met before promotion.
+    evidence_gate: dict[str, Any] | None = None
 
 
 # Default conflict-resolution priority.  Lower index = higher precedence.
@@ -127,6 +139,7 @@ class HintRecipeRegistry:
         structural_overrides: dict[str, Any] = {}
         strategy_switches: list[str] = []
         matched: list[HintRecipe] = []
+        recovery_policy: RecoveryPolicy | None = None
 
         for recipe in recipes:
             for hint in recipe.hints:
@@ -143,9 +156,11 @@ class HintRecipeRegistry:
             for switch in recipe.strategy_switches:
                 if switch not in strategy_switches:
                     strategy_switches.append(switch)
+            if recovery_policy is None and recipe.recovery_policy is not None:
+                recovery_policy = recipe.recovery_policy
             matched.append(recipe)
 
-        return selected_hints, overrides, matched, structural_overrides, strategy_switches
+        return selected_hints, overrides, matched, structural_overrides, strategy_switches, recovery_policy
 
 
 def _sort_by_precedence(recipes: list[HintRecipe]) -> list[HintRecipe]:

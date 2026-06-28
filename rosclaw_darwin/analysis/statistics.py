@@ -275,6 +275,73 @@ def fisher_exact_test(
     }
 
 
+def mcnemar_test(
+    baseline_success_candidate_failure: int,
+    baseline_failure_candidate_success: int,
+    exact: bool = True,
+) -> dict[str, Any]:
+    """McNemar test for paired binary outcomes.
+
+    Given the two discordant cell counts from a 2x2 paired table::
+
+                       candidate
+                   success   failure
+        baseline
+        success      a          b
+        failure      c          d
+
+    ``b`` = baseline success + candidate failure (newly failed).
+    ``c`` = baseline failure + candidate success (rescued).
+
+    Returns a dict with ``statistic``, ``p_value``, ``n_discordant``,
+    ``newly_failed`` (b), ``rescued`` (c), and ``method``.
+    """
+    b = max(0, int(baseline_success_candidate_failure))
+    c = max(0, int(baseline_failure_candidate_success))
+    n = b + c
+
+    if n == 0:
+        return {
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "n_discordant": 0,
+            "newly_failed": 0,
+            "rescued": 0,
+            "method": "none",
+        }
+
+    if exact:
+        # Exact two-sided p-value using Binomial(n, 0.5).
+        from math import comb
+
+        lo = min(b, c)
+        hi = max(b, c)
+        p_lower = sum(comb(n, k) for k in range(lo + 1)) * (0.5 ** n)
+        p_upper = sum(comb(n, k) for k in range(hi, n + 1)) * (0.5 ** n)
+        p_value = 2 * min(p_lower, p_upper, 0.5)
+        p_value = min(1.0, p_value)
+        return {
+            "statistic": None,
+            "p_value": round(p_value, 6),
+            "n_discordant": n,
+            "newly_failed": b,
+            "rescued": c,
+            "method": "exact_binomial",
+        }
+
+    # Chi-square approximation with continuity correction.
+    statistic = (abs(b - c) - 1) ** 2 / n if n > 0 else 0.0
+    p_value = max(0.0, math.erfc(math.sqrt(statistic / 2)))
+    return {
+        "statistic": round(statistic, 4),
+        "p_value": round(p_value, 6),
+        "n_discordant": n,
+        "newly_failed": b,
+        "rescued": c,
+        "method": "chi_square",
+    }
+
+
 def effect_size_absolute_delta(rate_a: float, rate_b: float) -> float:
     """Absolute difference between two rates."""
     return round(float(rate_b) - float(rate_a), 4)

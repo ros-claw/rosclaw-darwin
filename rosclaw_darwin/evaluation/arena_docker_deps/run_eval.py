@@ -460,6 +460,30 @@ _POLICY_CONFIG = dict(_JOB_CONFIG.get("policy_config_dict") or {})
 _POLICY_TYPE = str(_JOB_CONFIG.get("policy_type", ""))
 _SUCCESS_CONDITIONS = list(_JOB_CONFIG.get("success_conditions") or [])
 
+# Debug log to diagnose whether physics_ablation/rosclaw_valid_cube reached the container.
+_RUN_EVAL_LOG_PATH = Path("/workspace/data/traces/run_eval_debug.log")
+try:
+    _RUN_EVAL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _RUN_EVAL_LOG_PATH.write_text(
+        f"policy_type={_POLICY_TYPE}\n"
+        f"physics_ablation={_JOB_CONFIG.get('physics_ablation')}\n"
+        f"rosclaw_valid_cube={(_JOB_CONFIG.get('physics_ablation') or {}).get('rosclaw_valid_cube')}\n"
+        f"enable_route_classifier={_POLICY_CONFIG.get('enable_route_classifier')}\n"
+        f"route_classifier_path={_POLICY_CONFIG.get('route_classifier_path')}\n"
+    )
+except Exception:
+    pass
+
+
+def _log_run_eval(msg: str) -> None:
+    """Append a timestamped line to the container-side debug log."""
+    try:
+        _RUN_EVAL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _RUN_EVAL_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
 
 def _is_oracle_policy() -> bool:
     """Return True if the configured policy is an oracle/cheat policy."""
@@ -1096,11 +1120,13 @@ except Exception:
     pass
 
 # Patch procedural object spawn configs from task physics_ablation metadata.
-# This must run before the environment builds its scene, but after Isaac Sim
-# has initialized (so pxr is available).  We therefore patch eval_runner.load_env
-# which is called after SimulationApp startup.
+# eval_runner.load_env calls reload_arena_modules() first, which restores the
+# original ProceduralCube spawn cfg/methods, so we patch reload_arena_modules
+# to re-apply the patch after every reload.  We also wrap load_env as a
+# fallback for any path that bypasses reload.
 try:
     import isaaclab_arena.evaluation.eval_runner as _eval_runner_mod
+    import isaaclab_arena.utils.reload_modules as _reload_modules_mod
 
     _PHYSICS_ABLATION = dict(_JOB_CONFIG.get("physics_ablation") or {})
 
@@ -1130,31 +1156,93 @@ try:
             spawn_cfg.rigid_props.solver_velocity_iteration_count = int(
                 _PHYSICS_ABLATION["solver_velocity_iteration_count"]
             )
+        # Force a valid collision shape for ROSClaw-validated procedural cubes.
+        if _PHYSICS_ABLATION.get("rosclaw_valid_cube"):
+            try:
+                from isaaclab.sim import schemas as _schemas
+
+                existing = getattr(spawn_cfg, "collision_props", None)
+                _log_run_eval(f"[rosclaw_valid_cube] existing_collision_props={existing}")
+                if existing is None:
+                    spawn_cfg.collision_props = _schemas.CollisionPropertiesCfg(collision_enabled=True)
+                    _log_run_eval("[rosclaw_valid_cube] created new CollisionPropertiesCfg(collision_enabled=True)")
+                else:
+                    existing.collision_enabled = True
+                    _log_run_eval("[rosclaw_valid_cube] set existing.collision_enabled=True")
+                post = getattr(spawn_cfg, "collision_props", None)
+                _log_run_eval(
+                    f"[rosclaw_valid_cube] post_collision_props={post} "
+                    f"enabled={getattr(post, 'collision_enabled', None)}"
+                )
+            except Exception as exc:
+                import traceback as _tb
+
+                _log_run_eval(f"[rosclaw_valid_cube] collision patch failed: {exc}")
+                _log_run_eval(_tb.format_exc())
+
+    def _patch_procedural_cube_spawn() -> None:
+        """Patch ProceduralCube's class-level spawn cfg and generator."""
+        if not _PHYSICS_ABLATION:
+            return
+        try:
+            import isaaclab_arena.assets.object_library as _obj_library
+
+            # Avoid double-wrapping in the rare case this is called twice without reload.
+            if getattr(_obj_library.ProceduralCube, "_rosclaw_spawn_patched", False):
+                return
+
+            # Patch the module-level singleton spawn cfg so that even a
+            # pre-instantiated ProceduralCube uses the updated values.
+            _singleton = getattr(_obj_library, "_PROCEDURAL_CUBE_SPAWN_CFG", None)
+            if _singleton is not None:
+                _apply_physics_ablation_to_spawn(_singleton)
+                _log_run_eval(f"[physics_ablation] patched singleton spawn cfg: size={getattr(_singleton, 'size', None)}")
+
+            _orig_generate = _obj_library.ProceduralCube._generate_rigid_cfg
+
+            def _patched_generate(self: Any) -> Any:
+                cfg = _orig_generate(self)
+                _apply_physics_ablation_to_spawn(getattr(cfg, "spawn", None))
+                return cfg
+
+            _patched_generate._rosclaw_wrapped = True  # type: ignore[attr-defined]
+            _obj_library.ProceduralCube._generate_rigid_cfg = _patched_generate
+            _obj_library.ProceduralCube._rosclaw_spawn_patched = True  # type: ignore[attr-defined]
+
+            # Also patch any registered subclass that overrides the generator.
+            try:
+                from isaaclab_arena.assets.registries import AssetRegistry
+
+                for _asset_cls in AssetRegistry()._components.values():
+                    if isinstance(_asset_cls, type) and issubclass(_asset_cls, _obj_library.ProceduralCube):
+                        if "_generate_rigid_cfg" in _asset_cls.__dict__:
+                            _asset_cls._generate_rigid_cfg = _patched_generate
+                            _asset_cls._rosclaw_spawn_patched = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            _log_run_eval(f"[physics_ablation] patched ProceduralCube._generate_rigid_cfg; ablation={_PHYSICS_ABLATION}")
+        except Exception as exc:
+            import traceback as _tb
+
+            _log_run_eval(f"[physics_ablation] _patch_procedural_cube_spawn failed: {exc}")
+            _log_run_eval(_tb.format_exc())
+
+    _orig_reload_arena_modules = _reload_modules_mod.reload_arena_modules
+
+    def _patched_reload_arena_modules() -> None:
+        _orig_reload_arena_modules()
+        _patch_procedural_cube_spawn()
+
+    # After reload_arena_modules() restores original code, re-apply our patch.
+    _reload_modules_mod.reload_arena_modules = _patched_reload_arena_modules
+    _eval_runner_mod.reload_arena_modules = _patched_reload_arena_modules
 
     _orig_load_env = _eval_runner_mod.load_env
 
     def _patched_load_env(arena_env_args: list[str], job_name: str, render_mode: str | None = None):
         global _captured_asset_info
-        if _PHYSICS_ABLATION:
-            try:
-                import isaaclab_arena.assets.object_library as _obj_library
-
-                _orig_generate = _obj_library.ProceduralCube._generate_rigid_cfg
-
-                def _patched_generate(self: Any) -> Any:
-                    cfg = _orig_generate(self)
-                    _apply_physics_ablation_to_spawn(getattr(cfg, "spawn", None))
-                    return cfg
-
-                _obj_library.ProceduralCube._generate_rigid_cfg = _patched_generate
-                sys.stderr.write(f"[RUN_EVAL] applied physics_ablation to ProceduralCube: {_PHYSICS_ABLATION}\n")
-                sys.stderr.flush()
-            except Exception as exc:
-                sys.stderr.write(f"[RUN_EVAL] physics_ablation patch failed: {exc}\n")
-                sys.stderr.flush()
-        else:
-            sys.stderr.write("[RUN_EVAL] no physics_ablation in job config\n")
-            sys.stderr.flush()
+        _patch_procedural_cube_spawn()
 
         env = _orig_load_env(arena_env_args, job_name, render_mode)
 

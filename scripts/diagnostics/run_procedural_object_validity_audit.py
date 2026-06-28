@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--audit-steps", type=int, default=11)
     parser.add_argument("--table-z", type=float, default=0.18)
+    parser.add_argument(
+        "--episodes-per-run",
+        type=int,
+        default=1,
+        help="Run this many episodes (seeds) in a single Arena container.  When >1, the trace is appended across episodes.",
+    )
     parser.add_argument("--cleanup", action="store_true", default=True)
     parser.add_argument("--no-cleanup", action="store_true", default=False)
     return parser.parse_args()
@@ -115,7 +121,7 @@ def _load_trace(trace_path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def _record_to_report(task_id: str, seed: int, record: dict[str, Any]) -> ObjectValidityReport:
+def _record_to_report(task_id: str, seed: int, record: dict[str, Any], table_z: float = 0.18) -> ObjectValidityReport:
     """Convert an audit trace record into an ObjectValidityReport."""
     pos = record.get("object_root_pos") or [record.get("object_x"), record.get("object_y"), record.get("object_z")]
     pos = [float(v) if v is not None else 0.0 for v in pos]
@@ -153,7 +159,7 @@ def _record_to_report(task_id: str, seed: int, record: dict[str, Any]) -> Object
             step=record.get("step", 0),
             seed=seed,
         ),
-        table_z=record.get("table_z", 0.18),
+        table_z=table_z,
     )
 
 
@@ -204,7 +210,7 @@ def _run_audit(
     )
 
     records = _load_trace(trace_path)
-    reports = [_record_to_report(task.id, seed, r) for r in records if r.get("audit")]
+    reports = [_record_to_report(task.id, seed, r, table_z=table_z) for r in records if r.get("audit")]
 
     # Persist trace copy and reports.
     if trace_path.exists():
@@ -221,6 +227,90 @@ def _run_audit(
         "task_id": task.id,
         "task_path": task_path,
         "seed": seed,
+        "status": result.status,
+        "audit_records": len(reports),
+        "object_validity": [r.model_dump() for r in reports],
+        "asset_info": asset_info,
+        "benchmark_validity": benchmark_validity,
+    }
+
+
+def _run_audit_batch(
+    task_path: str,
+    task_yaml: str,
+    chunk_start_seed: int,
+    episodes: int,
+    audit_steps: int,
+    table_z: float,
+    out_dir: Path,
+    cleanup: bool = False,
+) -> dict[str, Any]:
+    """Run ``episodes`` validity audits in a single Arena container.
+
+    The audit policy appends trace records across episode resets so we can
+    amortize container startup time over many seeds.  The loaded object's
+    initial conditions vary because the environment RNG advances each reset.
+    """
+    if cleanup:
+        _cleanup_arena_containers()
+
+    task = TaskLoader().load(task_path)
+    task.mutation.seed = chunk_start_seed
+    task.metadata.setdefault("asset_policy", {})
+    task.metadata["asset_policy"]["allow_procedural_fallback"] = True
+    task.metadata["asset_policy"]["require_official_asset"] = False
+    task.metadata["asset_policy"]["diagnostic_variant"] = True
+
+    run_dir = out_dir / task.id / f"seed_{chunk_start_seed:03d}_{chunk_start_seed + episodes - 1:03d}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    trace_dir = run_dir / "traces"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = trace_dir / "episode_trace.jsonl"
+    if trace_path.exists():
+        trace_path.unlink()
+
+    policy_config = {
+        "policy_id": "object_validity_audit",
+        "type": "object_validity_audit",
+        "policy_type": "object_validity_audit",
+        "policy_config_dict": {
+            "audit_steps": audit_steps,
+            "table_z": table_z,
+            "clear_trace_on_reset": False,
+        },
+        "skill_hints": [],
+    }
+
+    adapter = ArenaAdapter(task)
+    result = adapter.run_policy(
+        policy_config,
+        episodes=episodes,
+        max_steps=audit_steps,
+        trace_dir=trace_dir,
+    )
+
+    records = _load_trace(trace_path)
+    reports = [
+        _record_to_report(task.id, chunk_start_seed + r.get("episode", 0), r, table_z=table_z)
+        for r in records
+        if r.get("audit")
+    ]
+
+    if trace_path.exists():
+        shutil.copy(trace_path, run_dir / "trace.jsonl")
+    for report in reports:
+        (run_dir / f"object_validity_step_{report.step}_seed_{report.seed:03d}.json").write_text(
+            report.model_dump_json(indent=2)
+        )
+
+    asset_info = (result.metadata or {}).get("asset_info", {})
+    benchmark_validity = (result.metadata or {}).get("benchmark_validity", {})
+
+    return {
+        "task_id": task.id,
+        "task_path": task_path,
+        "seed": chunk_start_seed,
+        "episodes": episodes,
         "status": result.status,
         "audit_records": len(reports),
         "object_validity": [r.model_dump() for r in reports],
@@ -291,38 +381,75 @@ def main() -> None:
 
     seeds = _parse_seeds(args.seeds)
     cleanup = args.cleanup and not args.no_cleanup
+    episodes_per_run = getattr(args, "episodes_per_run", 1)
+    if episodes_per_run < 1:
+        episodes_per_run = 1
 
     rows: list[dict[str, Any]] = []
     for task_path in args.tasks:
         with open(task_path, "r", encoding="utf-8") as f:
             task_yaml = f.read()
-        for seed in seeds:
-            print(f"\n=== {task_path} seed {seed} ===", file=sys.stderr)
-            try:
-                row = _run_audit(
-                    task_path,
-                    task_yaml,
-                    seed,
-                    args.audit_steps,
-                    args.table_z,
-                    out_dir,
-                    cleanup=cleanup,
+        if episodes_per_run == 1:
+            for seed in seeds:
+                print(f"\n=== {task_path} seed {seed} ===", file=sys.stderr)
+                try:
+                    row = _run_audit(
+                        task_path,
+                        task_yaml,
+                        seed,
+                        args.audit_steps,
+                        args.table_z,
+                        out_dir,
+                        cleanup=cleanup,
+                    )
+                except Exception as exc:
+                    row = {
+                        "task_id": Path(task_path).stem,
+                        "task_path": task_path,
+                        "seed": seed,
+                        "status": f"error: {exc}",
+                        "audit_records": 0,
+                        "object_validity": [],
+                    }
+                rows.append(row)
+                print(json.dumps(row, indent=2, default=str))
+        else:
+            for i in range(0, len(seeds), episodes_per_run):
+                chunk = seeds[i : i + episodes_per_run]
+                chunk_start = chunk[0]
+                chunk_end = chunk[-1]
+                print(
+                    f"\n=== {task_path} seeds {chunk_start}:{chunk_end} ({len(chunk)} episodes) ===",
+                    file=sys.stderr,
                 )
-            except Exception as exc:
-                row = {
-                    "task_id": Path(task_path).stem,
-                    "task_path": task_path,
-                    "seed": seed,
-                    "status": f"error: {exc}",
-                    "audit_records": 0,
-                    "object_validity": [],
-                }
-            rows.append(row)
-            print(json.dumps(row, indent=2, default=str))
+                try:
+                    row = _run_audit_batch(
+                        task_path,
+                        task_yaml,
+                        chunk_start,
+                        len(chunk),
+                        args.audit_steps,
+                        args.table_z,
+                        out_dir,
+                        cleanup=cleanup,
+                    )
+                except Exception as exc:
+                    row = {
+                        "task_id": Path(task_path).stem,
+                        "task_path": task_path,
+                        "seed": chunk_start,
+                        "episodes": len(chunk),
+                        "status": f"error: {exc}",
+                        "audit_records": 0,
+                        "object_validity": [],
+                    }
+                rows.append(row)
+                print(json.dumps(row, indent=2, default=str))
 
     summary = _aggregate(rows)
     summary["tasks"] = [Path(t).stem for t in args.tasks]
     summary["seeds"] = seeds
+    summary["episodes_per_run"] = episodes_per_run
     summary["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     csv_path = out_dir / "per_step_validity.csv"

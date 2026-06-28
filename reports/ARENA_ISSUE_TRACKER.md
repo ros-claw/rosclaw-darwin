@@ -16,11 +16,12 @@ reports in `reports/` and the external review package in
 | P0 | Correct way to command end-effector yaw/orientation | **Resolved locally** | ROSClaw |
 | P1 | Gripper blocked-close limit (~0.024) vs. expected `dex_cube` geometry | **Open** | Arena team |
 | P1 | Long-duration hold instability after ~1600 steps | **Open** | Physics tuning / Arena team |
-| P2 | Procedural cube fallback vs. intended `dex_cube` asset | **Submitted** — [IsaacLab-Arena#807](https://github.com/isaac-sim/IsaacLab-Arena/issues/807) | Arena team |
+| P1 | Large-yaw in-hand torsional slip (π/2, 2π/3) | **Open — escalation package finalized**, ready to submit | Physics tuning / Arena team |
+| P0 | Procedural cube fallback has disabled collision + invalid bbox | **Submitted** — [IsaacLab-Arena#807](https://github.com/isaac-sim/IsaacLab-Arena/issues/807); escalation package finalized | Arena team |
 | P2 | GoalPose success metric semantics (stationarity requirement?) | **Open** | Arena team |
 | P2 | GoalPose target yaw is fixed at π/2 for all seeds | **Open** | Arena team |
 | P2 | Official working baseline for `cube_goal_pose` | **Open** | Arena team |
-| P2 | GoalPose object spawns far from robot and falls/slides before grasp | **Open** | Arena team |
+| P2 | GoalPose object spawns far from robot and falls/slides before grasp | **Resolved** | Seed forwarding + reachability fix |
 
 ---
 
@@ -183,6 +184,48 @@ Questions:
 
 ---
 
+## 2.5 Procedural Fallback Object Invalidity (P0)
+
+**Status:** Submitted — [IsaacLab-Arena#807](https://github.com/isaac-sim/IsaacLab-Arena/issues/807). Escalation package finalized and ready to attach.  
+**Escalation package:** `external_reviews/procedural_cube_fallback_invalidity_escalation.md`  
+**Milestone report:** `reports/V17_MILESTONE_AND_ESCALATION_REPORT.md`
+
+**Observation (v1.7 object validity audit, 2026-06-20):**
+
+The procedural cube fallback used when `dex_cube` is not available is not a valid
+interactive rigid body. Audit script:
+`scripts/diagnostics/run_procedural_object_validity_audit.py`.
+
+Aggregate: `data_v17/diagnostics/procedural_object_validity_audit/aggregate_summary.json`
+
+| Task | Valid Rate | Collision Enabled | BBox Valid | Rigid Body | Index Consistency |
+|---|---:|---:|---:|---:|---:|
+| `goal_pose_procedural_cube_ood` | 0.0% | 0.0% | 0.0% | 100.0% | 100.0% |
+| `goal_pose_procedural_cube_dex_size` | 0.0% | 0.0% | 0.0% | 100.0% | 100.0% |
+| `goal_pose_procedural_cube_large` | 0.0% | 0.0% | 0.0% | 100.0% | 100.0% |
+
+Error distribution per task: `invalid_bbox`: 110, `collision_disabled`: 110
+(10 seeds × 11 steps).
+
+**Questions:**
+
+26. Why is `collision_enabled = False` for the procedural fallback?
+27. Why is the bounding box extent zero or degenerate?
+28. What is the intended collision geometry and bounding box for the procedural cube?
+29. Can the fallback be fixed to load the same collision/bbox properties as the
+    official `dex_cube`?
+30. Until fixed, should the procedural fallback be disabled entirely to prevent
+    invalid OOD benchmark claims?
+
+**Local claim boundary:**
+
+- Do **not** report procedural-cube results as OOD skill evaluation until
+  `valid_rate ≥ 1.0`.
+- Any "failure" on the procedural fallback is currently an **invalid environment**,
+  not a policy failure.
+
+---
+
 ## 3. Task / Success Metric (P2)
 
 Observation:
@@ -236,26 +279,89 @@ Questions:
 
 ---
 
-## 5. Known Working Baselines (P2)
+## 5. Large-Yaw Orientation Failure (P1)
+
+**Status:** Open — mechanism diagnosed; targeted structural interventions rejected; escalation package finalized and ready to submit.
+
+**Observation (v1.7 large-yaw slip diagnosis, 2026-06-20):**
+
+With the promoted reachability policy on `goal_pose_dex_cube_official.yaml`, 20
+seeds each at target yaws π/2 and 2π/3 show near-perfect lift but near-zero
+orientation achievement.
+
+| Target Yaw | Lifted Rate | Orient Achieved | Dominant Category |
+|---|---:|---:|---:|
+| π/2 (1.5708) | 100% | 10% | `torsional_slip` 9, `eef_yaw_failure` 9, `success` 2 |
+| 2π/3 (2.0944) | 100% | 0% | `torsional_slip` 18, `eef_yaw_failure` 2 |
+
+Script: `scripts/diagnostics/run_large_yaw_slip_diagnosis.py`
+Report: `reports/LARGE_YAW_SLIP_MECHANISM_REPORT.md`
+
+**Targeted interventions tested:**
+
+- `grasp_at_target_yaw` — full target yaw before descend, disable in-hand
+  reorientation.
+- `low_height_incremental_yaw` — small lift height, incremental yaw alignment.
+- `table_push_align` (base) — keep object pressed against the table while
+  applying yaw torque.
+- `table_push_align_tuned` — longer push-align, higher z-offset, faster yaw
+  step, stronger lateral oscillation, reduced downward pressure.
+
+Results: none improved `orientation_achieved_rate` by ≥20% relative.
+`grasp_at_target_yaw` and both `table_push_align` variants eliminated most
+`eef_yaw_failure` but converted them into `torsional_slip` without improving
+net success. The tuned variant produced the same outcome as the base variant.
+
+Report: `reports/LARGE_YAW_TARGETED_INTERVENTION_REPORT.md`
+**Escalation package:** `external_reviews/large_yaw_torsional_slip_escalation.md`
+
+**Questions:**
+
+31. Is large-yaw torsional slip expected for the default `dex_cube` + Franka
+    gripper contact properties?
+32. What are the default gripper finger friction coefficient and maximum closure
+    force?
+33. Can the gripper force limit or finger friction be increased via task config or
+    environment argument?
+34. Does Arena expose contact sensors or finger force/torque that could be used for
+    slip detection and recovery?
+35. Is there a recommended way to perform compliant push-align against the table
+    (using table reaction torque) without explicit force feedback?
+36. Should the target yaw tolerance (`orientation_threshold`) or success metric be
+    relaxed for large-yaw evaluation?
+
+**Local next step:**
+
+Base and tuned `table_push_align` have both been tested and failed the ≥20%
+relative improvement criterion. The large-yaw problem is now considered beyond
+the current open-loop state-machine space. The next step is to escalate to the
+Arena team as a P1 physics/contact-engineering request, including the ablation
+artifact `data_v17/ablations/large_yaw_intervention/aggregate_summary.json` and
+`reports/LARGE_YAW_TARGETED_INTERVENTION_REPORT.md`. No further local
+open-loop interventions are planned.
+
+---
+
+## 6. Known Working Baselines (P2)
 
 Questions:
 
-31. Is there an official teleop, heuristic, or learned policy that can solve
+37. Is there an official teleop, heuristic, or learned policy that can solve
     `cube_goal_pose` with `franka_ik`?
-32. Can the Arena team provide a reference trace or policy config for
+38. Can the Arena team provide a reference trace or policy config for
     `cube_goal_pose`?
-33. Is `cube_goal_pose` expected to be solvable with the default `franka_ik`
+39. Is `cube_goal_pose` expected to be solvable with the default `franka_ik`
     relative-mode action space?
-34. Are there other tasks in the benchmark suite that require orientation control
+40. Are there other tasks in the benchmark suite that require orientation control
     and do work?  If so, what controller/action-space do they use?
 
 ---
 
-## 6. Diagnostics We Can Run Locally (No External Input Required)
+## 7. Diagnostics We Can Run Locally (No External Input Required)
 
 While waiting for Arena-team answers, the following experiments can continue:
 
-### 6.1 Absolute quaternion orientation calibration
+### 7.1 Absolute quaternion orientation calibration
 
 Test whether `action[..., 3:7]` with the controller in absolute pose mode produces
 controlled end-effector rotation.
@@ -277,7 +383,7 @@ Expected outcome:
 - If Δ yaw ≈ 0: controller does not support explicit orientation control; must
   switch embodiment or approach.
 
-### 6.2 Multi-seed v3 ablation
+### 7.2 Multi-seed v3 ablation
 
 Run v3 policy with multiple seeds and report mean/max hold duration.
 
@@ -291,19 +397,19 @@ for seed in 0 1 2 3 4; do
 done
 ```
 
-### 6.3 Gripper force / closure ablation
+### 7.3 Gripper force / closure ablation
 
 Test different `gripper_close_threshold` and squeeze-step counts to map the
 grasp-stability frontier.
 
-### 6.4 Joint-space feasibility check
+### 7.4 Joint-space feasibility check
 
 Try switching to `franka_joint_pos` for a few episodes to see if orientation
 control becomes available.
 
 ---
 
-## 7. Recommended Next Actions
+## 8. Recommended Next Actions
 
 | Order | Action | Rationale |
 |---|---|---|
@@ -315,7 +421,7 @@ control becomes available.
 
 ---
 
-## 8. Honest Claim Boundary
+## 9. Honest Claim Boundary
 
 Until the P0 controller/action-space question is answered:
 
@@ -337,3 +443,4 @@ Until the P0 controller/action-space question is answered:
 - `reports/GRIPPER_CALIBRATION_REPORT.md`
 - `reports/GOAL_POSE_PHYSICS_ABLATION_REPORT.md`
 - `external_reviews/goal_pose_diagnosis_pack/questions_for_arena_team.md`
+- `external_reviews/procedural_cube_fallback_invalidity_escalation.md`
