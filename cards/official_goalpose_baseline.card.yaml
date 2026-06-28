@@ -1,0 +1,38 @@
+name: official_goalpose_baseline
+type: baseline
+summary: 'Official dex_cube baseline: 99/100 success, valid environment, no fallback.'
+candidate: null
+task_validity:
+  task_id: goal_pose_dex_cube_official
+  benchmark_scope: official_arena_asset
+  validity_status: valid
+  asset_fallback_used: false
+  official_asset: true
+  can_claim_official_benchmark: true
+  can_claim_ood_diagnostic: false
+  object_validity: null
+  reason: []
+failure_signature: null
+paired_evidence: null
+promotion_decision:
+  candidate_name: official_goalpose_baseline
+  status: v1.0_baseline
+  claim_level: experimental
+  evidence_refs: []
+  passed_gates: []
+  failed_gates: []
+  limitations: []
+  allowed_claims:
+  - valid official-asset baseline
+  disallowed_claims: []
+  next_required_evidence: []
+  fth_status: null
+demo_scope: []
+limitations: []
+allowed_claims:
+- Darwin can validate benchmark environments and produce clean official baselines.
+blocked_claims:
+- universal robot capability is not claimed
+- official Arena leaderboard result is not claimed
+artifacts: {}
+created_at: null

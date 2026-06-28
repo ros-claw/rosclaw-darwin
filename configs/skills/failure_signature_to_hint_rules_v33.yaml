@@ -1,0 +1,48 @@
+version: 0.3.3
+
+# FailureToHint v3.3 route-selection rules.
+# These rules extend the v3.2 recipe set with explicit claim levels and recovery
+# routes.  A recipe without a route_selection is still useful for hint generation
+# but will not be treated as a validated recovery strategy.
+rules:
+  - name: seed24_grip_quality_micro_recovery
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - grip_force_insufficient
+      - low_object_z_at_grasp
+      - gripper_too_open
+    hints:
+      - conditional_micro_recovery
+      - lower_reclose
+    parameter_overrides:
+      enable_grip_quality_monitor: true
+      micro_recovery_strategy: lower_reclose
+    confidence: 0.8
+    rationale: "Seed-24-like signature: object is low at grasp and gripper is too open; a local lower-and-reclose may recover."
+    expected_effect: "Improve grasp contact for low-Z objects without changing normal seeds."
+    route_selection: conditional_micro_recovery
+    monitor: grip_quality_monitor
+    claim_level: recovery_candidate
+    promotion_status: experimental
+
+  - name: large_yaw_torsional_slip
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - large_yaw_torsional_slip
+      - rotation_induced_slip
+      - yaw_not_transferred_to_object
+    hints:
+      - reduce_rotation_acceleration
+      - maintain_grip_force
+    parameter_overrides:
+      yaw_step_size: 0.10
+      stabilize_steps_after_yaw: 20
+    confidence: 0.6
+    rationale: "Large-yaw reorientation induces torsional slip that kinematic-only control cannot reliably suppress."
+    expected_effect: "Honest diagnosis; full recovery requires force/tactile feedback or human escalation."
+    route_selection: blocked_external
+    monitor: slip_monitor
+    claim_level: diagnosis_only
+    promotion_status: blocked_external

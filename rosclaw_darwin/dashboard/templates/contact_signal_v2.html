@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Contact Signal v2 - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>Contact Signal v2 Reliability</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/contact-signal-v2/chart.svg" alt="Contact signal v2 coverage chart">
+      <table>
+        <tr><th>Phase</th><th>Coverage</th><th>Missing signal rate</th></tr>
+        {% for phase, info in data.coverage.items() %}
+        <tr>
+          <td>{{ phase }}</td>
+          <td class="metric">{{ "%.1f"|format(info.coverage_rate|default(0.0)*100) }}%</td>
+          <td class="metric">{{ "%.1f"|format(info.missing_signal_rate|default(0.0)*100) }}%</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No contact signal v2 audit data available yet.</p></div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Contact Signal - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>📡 Contact Signal Trace Timeline</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Trace Summary</h2>
+  <p>Source: <code>{{ data._source_path or "—" }}</code> · Steps: <span class="metric">{{ data.num_steps or "—" }}</span></p>
+  <table>
+    <tr><th>Step</th><th>Contact State</th><th>Confidence</th><th>Notes</th></tr>
+    {% for row in data.timeline %}
+    <tr>
+      <td class="metric">{{ row.step }}</td>
+      <td><span class="badge {% if row.contact_state == 'contact' %}badge-success{% elif row.contact_state == 'slip' %}badge-fail{% else %}badge-fail{% endif %}">{{ row.contact_state }}</span></td>
+      <td class="metric">{{ "%.2f"|format((row.contact_confidence or 0.0) * 100) }}%</td>
+      <td><code>{{ row.notes or "—" }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/contact-signal/chart.svg" alt="Contact signal timeline chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No contact signal trace data available yet.</p></div>
+{% endif %}
+{% endblock %}

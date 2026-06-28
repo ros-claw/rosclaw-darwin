@@ -1,0 +1,154 @@
+version: 0.3.2
+
+rules:
+  # ---------------------------------------------------------------------------
+  # v3.2 recovery-policy rules for closed-loop slip recovery on goal_pose.
+  # These rules attach a RecoveryPolicy to the matched hints so that the
+  # failure-to-hint engine can recommend *which* recovery strategy to enable,
+  # not just parameter tweaks.
+  # ---------------------------------------------------------------------------
+
+  - name: torsional_slip_recovery
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - torsional_slip
+      - large_yaw_failure
+      - rotation_induced_slip
+      - object_lifted
+    hints:
+      - enable_slip_monitor
+      - lower_and_regrip_on_slip
+      - pause_stabilize_first_slip
+    parameter_overrides:
+      enable_slip_monitor: true
+      slip_monitor_event_threshold: 3.5
+      slip_recovery_consecutive_steps: 3
+      slip_recovery_max_attempts: 2
+    structural_overrides:
+      slip_recovery_enabled: true
+    strategy_switches:
+      - slip_recovery
+      - verify_object_following
+    confidence: 0.7
+    rationale: "Object is lifted but the gripper-object yaw separation is growing; use closed-loop slip recovery."
+    expected_effect: "Reduce torsional slip severity and give the policy a second chance to re-grasp."
+    recovery_policy:
+      type: best_combined
+      max_attempts: 2
+      monitor:
+        type: slip_monitor
+        enabled: true
+        event_score_threshold: 3.5
+        min_event_steps: 5
+      activation_condition:
+        slip_score_gt: 3.5
+        phase_in:
+          - LIFT
+          - REORIENT
+          - ALIGN
+          - HOLD
+          - VERIFY_OBJECT_FOLLOWING
+        consecutive_slip_steps: 3
+        any_slip: true
+      parameter_overrides:
+        slip_recovery_pause_steps: 10
+        slip_recovery_lower_delta_z: 0.05
+        slip_recovery_place_push_max_steps: 40
+        slip_recovery_place_push_yaw_step: 0.10
+        slip_recovery_abort_yaw_threshold: 0.5
+      success_metric:
+        - metric: orientation_achieved_rate
+        - metric: slip_recovery_success_rate
+      fallback_policy:
+        type: abort_safe
+        max_attempts: 1
+
+  - name: vertical_slip_recovery
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - vertical_slip
+      - lifted_then_dropped
+      - drop_after_lift
+    hints:
+      - enable_slip_monitor
+      - lower_and_regrip_on_slip
+    parameter_overrides:
+      enable_slip_monitor: true
+      slip_monitor_event_threshold: 2.5
+      slip_recovery_consecutive_steps: 2
+      slip_recovery_max_attempts: 2
+    structural_overrides:
+      slip_recovery_enabled: true
+    strategy_switches:
+      - slip_recovery
+    confidence: 0.65
+    rationale: "Object is dropping relative to the gripper; lower, re-close, and lift again."
+    expected_effect: "Catch vertical slip early and regain grasp before the object falls."
+    recovery_policy:
+      type: lower_regrip
+      max_attempts: 2
+      monitor:
+        type: slip_monitor
+        enabled: true
+        event_score_threshold: 2.5
+        min_event_steps: 3
+      activation_condition:
+        slip_score_gt: 2.5
+        phase_in:
+          - LIFT
+          - HOLD
+          - VERIFY_OBJECT_FOLLOWING
+        consecutive_slip_steps: 2
+        any_slip: true
+      parameter_overrides:
+        slip_recovery_lower_delta_z: 0.05
+        slip_recovery_pause_steps: 5
+      success_metric:
+        - metric: lifted_rate
+      fallback_policy:
+        type: abort_safe
+        max_attempts: 1
+
+  - name: residual_yaw_abort_recovery
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - eef_yaw_failure
+      - yaw_not_transferred_to_object
+    hints:
+      - abort_residual_yaw_recovery
+    parameter_overrides:
+      enable_slip_monitor: true
+      slip_recovery_strategy: abort_residual_yaw
+      slip_recovery_abort_yaw_threshold: 0.5
+    structural_overrides:
+      slip_recovery_enabled: true
+    strategy_switches:
+      - slip_recovery
+    confidence: 0.55
+    rationale: "End-effector yaw drifted far from target but object yaw is close; abort reorientation and hold."
+    expected_effect: "Avoid over-rotating the gripper when the object is already aligned."
+    recovery_policy:
+      type: abort_residual_yaw
+      max_attempts: 1
+      monitor:
+        type: slip_monitor
+        enabled: true
+        event_score_threshold: 3.5
+        min_event_steps: 5
+      activation_condition:
+        slip_score_gt: 3.5
+        phase_in:
+          - ALIGN
+          - HOLD
+        consecutive_slip_steps: 3
+        any_slip: true
+      parameter_overrides:
+        slip_recovery_abort_yaw_threshold: 0.5
+      success_metric:
+        - metric: orientation_achieved_rate
+      fallback_policy:
+        type: abort_safe
+        max_attempts: 1

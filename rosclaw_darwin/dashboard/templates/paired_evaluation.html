@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Paired Evaluation - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>Paired No-Regression Evaluation</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/paired-evaluation/chart.svg" alt="Paired evaluation summary chart">
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Baseline success rate</td><td class="metric">{{ "%.2f"|format(data.baseline_success_rate|default(0.0)) }}</td></tr>
+        <tr><td>Candidate success rate</td><td class="metric">{{ "%.2f"|format(data.candidate_success_rate|default(0.0)) }}</td></tr>
+        <tr><td>Rescued count</td><td class="metric">{{ data.rescued_count|default(0) }}</td></tr>
+        <tr><td>Newly failed count</td><td class="metric">{{ data.newly_failed_count|default(0) }}</td></tr>
+        <tr><td>Valid pairs</td><td class="metric">{{ data.valid_pairs|default(0) }}</td></tr>
+        <tr><td>McNemar p-value</td><td class="metric">{{ "%.4f"|format(data.mcnemar_p_value|default(1.0)) }}</td></tr>
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No paired evaluation data available yet.</p></div>
+  {% endif %}
+{% endblock %}

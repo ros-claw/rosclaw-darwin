@@ -1,0 +1,92 @@
+version: 0.3.4
+
+# FailureToHint v3.4 evidence-aware promotion rules.
+# Every recovery candidate must declare an evidence_gate.  Rules whose
+# route_selection is outside the policy's control (blocked_external) remain
+# blocked regardless of any gate.
+rules:
+  - name: seed24_grip_quality_micro_recovery
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - grip_force_insufficient
+      - low_object_z_at_grasp
+      - gripper_too_open
+    hints:
+      - conditional_micro_recovery
+      - lower_reclose
+    parameter_overrides:
+      enable_grip_quality_monitor: true
+      micro_recovery_strategy: lower_reclose
+    confidence: 0.8
+    rationale: "Seed-24-like signature: object is low at grasp and gripper is too open; a local lower-and-reclose may recover."
+    expected_effect: "Improve grasp contact for low-Z objects without changing normal seeds."
+    route_selection: conditional_micro_recovery
+    monitor: grip_quality_monitor
+    claim_level: recovery_candidate
+    promotion_status: experimental
+    evidence_gate:
+      gate_type: paired_no_regression
+      min_rescued_count: 1
+      max_newly_failed_count: 0
+      min_candidate_success_rate: 0.95
+      max_new_failure_rate: 0.01
+      required_tasks:
+        - goal_pose_dex_cube_official
+      required_seed_range: "0:199"
+
+  - name: large_yaw_torsional_slip
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - large_yaw_torsional_slip
+      - rotation_induced_slip
+      - yaw_not_transferred_to_object
+    hints:
+      - reduce_rotation_acceleration
+      - maintain_grip_force
+    parameter_overrides:
+      yaw_step_size: 0.10
+      stabilize_steps_after_yaw: 20
+    confidence: 0.6
+    rationale: "Large-yaw reorientation induces torsional slip that kinematic-only control cannot reliably suppress."
+    expected_effect: "Honest diagnosis; full recovery requires force/tactile feedback or human escalation."
+    route_selection: blocked_external
+    monitor: slip_monitor
+    claim_level: diagnosis_only
+    promotion_status: blocked_external
+
+  - name: approach_collision_diagnosis
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - approach_collision
+    hints:
+      - monitor_approach_geometry
+      - slow_approach_on_collision_risk
+    parameter_overrides:
+      enable_approach_collision_monitor: true
+    confidence: 0.5
+    rationale: "Approach-phase collisions indicate workspace / placement geometry issues that are independent of grip-quality recovery."
+    expected_effect: "Diagnosis-only route; keeps approach-collision failures out of the grip-quality micro-recovery evidence pool."
+    route_selection: diagnosis_only
+    monitor: contact_signal_provider
+    claim_level: diagnosis_only
+    promotion_status: experimental
+
+  - name: generic_grip_quality_diagnosis
+    source: auto_rule
+    hint_level: local_adaptive_hint
+    trigger_tags:
+      - grip_force_insufficient
+    hints:
+      - monitor_grip_quality
+    parameter_overrides:
+      enable_grip_quality_monitor: true
+    confidence: 0.5
+    rationale: "Weak grip detected but no full seed24 signature; safe to monitor only."
+    expected_effect: "Diagnosis-only hint until paired evidence supports a recovery claim."
+    route_selection: diagnosis_only
+    monitor: grip_quality_monitor
+    claim_level: diagnosis_only
+    promotion_status: experimental

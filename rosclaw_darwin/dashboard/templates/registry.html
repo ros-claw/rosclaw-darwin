@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Registry - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🗂️ Promotion Registry</h1><p>Runtime query interface for promoted recoveries.</p></div>
+<div class="card"><h2>Registry Entries</h2>
+{% if items %}
+<table><tr><th>ID</th><th>Kind</th><th>Status</th><th>Runtime Enabled</th><th>Card</th></tr>
+{% for item in items %}
+<tr><td>{{ item.id }}</td><td>{{ item.kind }}</td><td><span class="badge {% if item.status == 'candidate_recovery' %}badge-success{% elif item.status == 'blocked_external' %}badge-fail{% else %}badge{% endif %}">{{ item.status }}</span></td><td>{{ item.enabled_for_runtime }}</td><td>{{ item.card }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No registry entries. Run <code>rosclaw darwin registry add</code>.</p>
+{% endif %}</div>
+{% endblock %}

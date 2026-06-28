@@ -1,0 +1,55 @@
+required_checks:
+  unit_tests: true
+  integration_tests: true
+  cli_smoke: true
+  dashboard_loaders: true
+  evidence_cards: true
+  docs_exist: true
+
+optional_checks:
+  arena_smoke: true
+  full_200_seed_eval: false
+
+blocked_if:
+  unsupported_claims_found: true
+  blocked_external_marked_validated: true
+  invalid_environment_used_for_skill_claim: true
+
+unsupported_phrases:
+  - "validated transferable skill"
+  - "large-yaw solved"
+  - "official Arena leaderboard"
+  - "procedural OOD success"
+
+required_docs:
+  - README.md
+  - docs/DARWIN_PRODUCT_DEFINITION.md
+  - docs/DARWIN_SCOPE_BOUNDARY.md
+  - docs/DARWIN_EVIDENCE_LEVELS.md
+  - docs/DARWIN_CLAIM_BOUNDARIES.md
+  - docs/DARWIN_REPORTING_GUIDE.md
+
+required_cards:
+  - official_goalpose_baseline
+  - seed24_micro_recovery
+  - procedural_fallback_invalid_environment
+  - large_yaw_torsional_slip_blocked_external
+  - learned_trigger_bounded_residual_experimental
+
+allowed_promotion_levels:
+  - experimental_only
+  - candidate_recovery
+  - blocked_external
+  - diagnosis_only
+  - human_escalation
+
+blocked_promotion_transitions:
+  - from: blocked_external
+    to: candidate_recovery
+  - from: blocked_external
+    to: validated_recovery
+  - from: blocked_external
+    to: validated_transferable_skill
+
+release_version: "1.0.0"
+release_name: "ROSClaw-Darwin v1.0"

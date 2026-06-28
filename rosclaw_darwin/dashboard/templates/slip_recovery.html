@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Slip Recovery - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🔄 Slip-Aware Recovery Ablation</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Recovery Strategy Summary</h2>
+  <p>Source: <code>{{ data._source_path }}</code> · Conditions: <code>{{ data.conditions | join(", ") }}</code> · Yaws: <code>{{ data.target_yaws | join(", ") }}</code> · Seeds: <code>{{ data.seeds | join(", ") }}</code></p>
+  <table>
+    <tr>
+      <th>Condition</th>
+      <th>Target Yaw</th>
+      <th>Count</th>
+      <th>Valid</th>
+      <th>Env Success</th>
+      <th>Lifted Rate</th>
+      <th>Orient Achieved</th>
+      <th>Recovery Triggered</th>
+      <th>Mean Coupling</th>
+      <th>Category Distribution</th>
+    </tr>
+    {% for key, summary in data.per_condition_target.items() %}
+    <tr>
+      <td><code>{{ summary.condition }}</code></td>
+      <td class="metric">{{ "%.4f"|format(summary.target_yaw or 0.0) }}</td>
+      <td class="metric">{{ summary.count }}</td>
+      <td class="metric">{{ summary.valid_count }}</td>
+      <td class="metric">{{ "%.2f"|format((summary.env_success_rate or 0.0) * 100) if summary.env_success_rate is not none else "—" }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.lifted_rate or 0.0) * 100) if summary.lifted_rate is not none else "—" }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.orientation_achieved_rate or 0.0) * 100) if summary.orientation_achieved_rate is not none else "—" }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.recovery_triggered_rate or 0.0) * 100) if summary.recovery_triggered_rate is not none else "—" }}%</td>
+      <td class="metric">{{ "%.3f"|format(summary.mean_yaw_coupling_score or 0.0) }}</td>
+      <td><code>{{ summary.category_distribution }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/slip-recovery/chart.svg" alt="Slip recovery ablation chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No slip-aware recovery ablation data yet. Run <code>scripts/ablations/run_slip_aware_recovery_ablation.py</code> to populate.</p></div>
+{% endif %}
+{% endblock %}

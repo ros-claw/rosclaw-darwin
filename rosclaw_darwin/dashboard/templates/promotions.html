@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}Promotions - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🚀 Promotion Decisions</h1><p>Evidence-backed promotion status from paired evaluations.</p></div>
+<div class="card"><h2>Promotions</h2>
+{% if has_data %}
+<table><tr><th>Candidate</th><th>Status</th><th>Gate Passed</th><th>Reason</th></tr>
+<tr><td>{{ data.candidate_name }}</td><td><span class="badge {% if data.status == 'candidate_recovery' %}badge-success{% elif data.status == 'blocked_external' %}badge-fail{% else %}badge{% endif %}">{{ data.status }}</span></td><td>{{ data.gate_passed }}</td><td>{{ data.reason }}</td></tr>
+</table>
+{% else %}
+<p>No promotion decisions. Run <code>rosclaw darwin promote</code> after pair-eval.</p>
+{% endif %}</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Slip Monitor - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🛰️ Closed-Loop Slip Monitor Validation</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Detection Performance by Target Yaw</h2>
+  <p>Source: <code>{{ data._source_path }}</code> · Score threshold: <span class="metric">{{ data.score_threshold or "adaptive" }}</span> · Traces: <span class="metric">{{ data.num_traces or "—" }}</span></p>
+  <table>
+    <tr>
+      <th>Target Yaw</th>
+      <th>Total</th>
+      <th>Failed</th>
+      <th>Success</th>
+      <th>Recall on Failures</th>
+      <th>Precision</th>
+      <th>FP Rate on Success</th>
+      <th>Median Early Steps</th>
+      <th>Category Counts</th>
+    </tr>
+    {% for yaw, summary in data.by_yaw.items() %}
+    <tr>
+      <td class="metric">{{ yaw }}</td>
+      <td class="metric">{{ summary.total }}</td>
+      <td class="metric">{{ summary.failed }}</td>
+      <td class="metric">{{ summary.success }}</td>
+      <td class="metric">{{ "%.2f"|format((summary.recall_on_failures or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.precision_on_detections or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.false_positive_rate_on_success or 0.0) * 100) if summary.false_positive_rate_on_success is not none else "—" }}</td>
+      <td class="metric">{{ "%.0f"|format(summary.median_early_detection_steps or 0.0) }}</td>
+      <td><code>{{ summary.category_counts }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/slip-monitor/chart.svg" alt="Slip monitor validation chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No slip monitor validation data yet. Run <code>scripts/diagnostics/run_slip_monitor_validation.py</code> to populate.</p></div>
+{% endif %}
+{% endblock %}

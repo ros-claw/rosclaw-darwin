@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Valid OOD Subtasks - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧩 Valid OOD Subtask Decomposition</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Subtask Success Matrix</h2>
+  <p>Source: <code>{{ data._source_path or "—" }}</code></p>
+  <table>
+    <tr><th>Subtask</th><th>Variant</th><th>Success Rate</th><th>Count</th></tr>
+    {% for subtask, variants in data.matrix.items() %}
+      {% for variant, summary in variants.items() %}
+      <tr>
+        <td><code>{{ subtask }}</code></td>
+        <td><code>{{ variant }}</code></td>
+        <td class="metric">{{ "%.2f"|format((summary.success_rate or 0.0) * 100) }}%</td>
+        <td class="metric">{{ summary.count or 0 }}</td>
+      </tr>
+      {% endfor %}
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/valid-ood-subtasks/chart.svg" alt="Valid OOD subtasks matrix chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No valid OOD subtask decomposition data available yet.</p></div>
+{% endif %}
+{% endblock %}

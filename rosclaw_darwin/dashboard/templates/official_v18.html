@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Official v1.8 Benchmark - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🏅 Official Benchmark Trajectory (v1.8 view)</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Success-rate trajectory</h2>
+  <table>
+    <tr><th>Benchmark</th><th>Success Rate</th><th>Source</th></tr>
+    <tr>
+      <td>v1.6 old official 100-seed</td>
+      <td class="metric">{{ "%.2f"|format((data.old_success_rate or 0.0) * 100) }}%</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>v1.7 post-reachability 100-seed</td>
+      <td class="metric">{{ "%.2f"|format((data.post_reachability_success_rate or 0.0) * 100) if data.post_reachability_success_rate is not none else "pending" }}</td>
+      <td><code>{{ data.post_reachability_path or "—" }}</code></td>
+    </tr>
+    <tr>
+      <td>Seed24 fix v3 100-seed</td>
+      <td class="metric">{{ "%.2f"|format((data.seed24_fix_success_rate or 0.0) * 100) if data.seed24_fix_success_rate is not none else "pending" }}</td>
+      <td><code>{{ data.seed24_fix_path or "—" }}</code></td>
+    </tr>
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/official-v18/chart.svg" alt="Official v1.8 benchmark chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No official benchmark data available yet.</p></div>
+{% endif %}
+{% endblock %}

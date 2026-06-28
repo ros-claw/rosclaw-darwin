@@ -1,0 +1,97 @@
+# ROSClaw-Darwin v1.9 experiment gates.
+# These gates are hard constraints: a candidate may only be promoted if it
+# satisfies the relevant gate.  Gate checks are performed by ablation runners
+# and final reports.
+
+official_promotion_gate:
+  policy: configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml
+  task: configs/tasks/goal_pose_dex_cube_official.yaml
+  seeds_main: "0:99"
+  min_success_rate_main: 0.99
+  seeds_holdout: "100:199"
+  min_success_rate_holdout: 0.98
+  max_physics_anomaly_rate: 0.0
+  max_asset_fallback_count: 0
+  max_asset_fallback_rate: 0.0
+  max_metric_parser_error_rate: 0.0
+  max_approach_collision_rate: 0.0
+  min_official_asset_rate: 1.0
+
+seed24_micro_recovery_gate:
+  seed: 24
+  repeat: 20
+  task: configs/tasks/goal_pose_dex_cube_official.yaml
+  base_policy: configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml
+  candidate_policy: configs/policies/heuristic_servo_goal_pose_v3_seed24_micro_recovery.yaml
+  min_seed24_success_rate: 0.9
+  max_trigger_rate_on_normal_seeds: 0.05
+  min_official_success_main: 0.99
+  min_official_success_holdout: 0.98
+
+large_yaw_gate:
+  task: configs/tasks/goal_pose_dex_cube_official.yaml
+  base_policy: configs/policies/heuristic_servo_goal_pose_v3_reachability_promoted.yaml
+  target_yaws: [1.5708, 2.0944]
+  seeds: "0:19"
+  min_relative_orientation_gain: 0.20
+  max_lift_regression: 0.05
+  min_lift_rate: 0.95
+
+valid_ood_gate:
+  task_family: goal_pose_rosclaw_valid_cube
+  asset_scope: rosclaw_valid_ood
+  require_validity_rate: 1.0
+  require_collision_enabled_rate: 1.0
+  require_bbox_valid_rate: 1.0
+  require_rigid_body_enabled_rate: 1.0
+  min_positive_delta_object_lifted_rate: 0.10
+  min_positive_delta_fba: 0.5
+  can_claim_official_benchmark: false
+
+residual_policy_gate:
+  wrapper_formula: "final_action = heuristic_action + clip(residual, residual_limits)"
+  residual_limits:
+    dx: 0.005
+    dy: 0.005
+    dz: 0.005
+    drot_x: 0.03
+    drot_y: 0.03
+    drot_z: 0.03
+    gripper: 0.05
+  max_success_frame_trigger_rate: 0.05
+  max_action_norm_increase_factor: 2.0
+  require_safety_clamp_trace: true
+  require_residual_enabled_baseline: true
+
+failure_to_hint_v33_gate:
+  no_claim_without_live_arena_gain: true
+  allowed_experimental_claim_levels:
+    - diagnosis_only
+    - boundary_recovery_candidate
+  validated_transferable_skill_requirements:
+    min_ood_variants_with_gain: 2
+    require_holdout_split: true
+    no_official_regression: true
+    not_metric_or_validity_artifact: true
+
+execution_policy:
+  default_serial: true
+  default_cleanup: true
+  one_container_per_run: true
+  save_artifacts:
+    - command.json
+    - task.yaml
+    - policy.yaml
+    - summary.json
+    - episode_metrics.jsonl
+    - phase_trace.jsonl
+    - contact_signal.jsonl
+    - slip_signal.jsonl
+    - grip_quality_signal.jsonl
+    - failure_signature.json
+    - asset_info.json
+    - benchmark_validity.json
+    - object_validity.json
+    - stdout.log
+    - stderr.log
+    - environment_info.json

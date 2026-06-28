@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}Paired Evaluations - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>📊 Paired No-Regression Evaluations</h1><p>Candidate vs baseline comparisons.</p></div>
+<div class="card"><h2>Latest Paired Summary</h2>
+{% if has_data %}
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Valid Pairs</td><td class="metric">{{ data.valid_pairs }}</td></tr>
+<tr><td>Baseline Success Rate</td><td class="metric">{{ "%.2f%%"|format(data.baseline_success_rate * 100) }}</td></tr>
+<tr><td>Candidate Success Rate</td><td class="metric">{{ "%.2f%%"|format(data.candidate_success_rate * 100) }}</td></tr>
+<tr><td>Rescued Count</td><td class="metric">{{ data.rescued_count }}</td></tr>
+<tr><td>Newly Failed Count</td><td class="metric">{{ data.newly_failed_count }}</td></tr>
+</table>
+<img src="/paired-evaluation/chart.svg" alt="Paired evaluation chart">
+{% else %}
+<p>No paired evaluation data. Run <code>rosclaw darwin pair-eval --mock</code>.</p>
+{% endif %}</div>
+{% endblock %}

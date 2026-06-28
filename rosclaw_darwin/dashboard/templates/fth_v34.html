@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}FTH v3.4 - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>FailureToHint v3.4 Evidence Status</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/fth-v34/chart.svg" alt="FTH v3.4 evidence status chart">
+      <table>
+        <tr><th>Recipe</th><th>Route</th><th>Promotion status</th><th>Gate passed</th><th>Reason</th></tr>
+        {% for status in data.statuses %}
+        <tr>
+          <td>{{ status.recipe_name }}</td>
+          <td>{{ status.route_selection|default("—") }}</td>
+          <td><span class="badge {% if status.promotion_status == 'candidate_recovery' %}badge-success{% elif status.promotion_status == 'blocked_external' or status.promotion_status == 'abort_safe' %}badge-fail{% else %}badge-warning{% endif %}">{{ status.promotion_status }}</span></td>
+          <td>{{ status.evidence_gate_passed }}</td>
+          <td>{{ status.gate_reason|default("—") }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No FTH v3.4 evidence data available yet.</p></div>
+  {% endif %}
+{% endblock %}

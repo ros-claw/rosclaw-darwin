@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Learned Trigger - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>Learned Trigger Model</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/learned-trigger/chart.svg" alt="Learned trigger metrics chart">
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Precision</td><td class="metric">{{ "%.3f"|format(data.precision|default(0.0)) }}</td></tr>
+        <tr><td>Recall</td><td class="metric">{{ "%.3f"|format(data.recall|default(0.0)) }}</td></tr>
+        <tr><td>F1 score</td><td class="metric">{{ "%.3f"|format(data.f1_score|default(0.0)) }}</td></tr>
+        <tr><td>Success-frame FPR</td><td class="metric">{{ "%.3f"|format(data.false_positive_rate_on_success|default(0.0)) }}</td></tr>
+        <tr><td>AUROC</td><td class="metric">{{ "%.3f"|format(data.auroc|default(0.0)) }}</td></tr>
+        <tr><td>Calibration error</td><td class="metric">{{ "%.3f"|format(data.calibration_error|default(0.0)) }}</td></tr>
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No learned trigger model data available yet.</p></div>
+  {% endif %}
+{% endblock %}

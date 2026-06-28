@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Validity - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🔍 Benchmark Validity</h1><p>Environment validity audits and scope classification.</p></div>
+<div class="card"><h2>Validity Summary</h2>
+{% if has_data %}
+<table><tr><th>Task</th><th>Scope</th><th>Status</th><th>Official Asset</th></tr>
+{% for task_id, info in data.per_task.items() %}
+<tr><td>{{ task_id }}</td><td>{{ info.scope }}</td><td><span class="badge {% if info.status == 'valid' %}badge-success{% else %}badge-fail{% endif %}">{{ info.status }}</span></td><td>{{ info.official_asset }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No validity data available. Run <code>rosclaw darwin validate-env --mock</code>.</p>
+{% endif %}</div>
+{% endblock %}

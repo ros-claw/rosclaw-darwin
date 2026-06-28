@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Valid OOD Cubes - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧪 Valid OOD Cube Benchmark</h1></div>
+
+{% if has_validity %}
+<div class="card">
+  <h2>Validity Audit Summary</h2>
+  <p>Source: <code>{{ validity._source_path }}</code></p>
+  <table>
+    <tr>
+      <th>Task</th>
+      <th>Valid Rate</th>
+      <th>Collision %</th>
+      <th>BBox %</th>
+      <th>Rigid Body %</th>
+      <th>Index Consistency %</th>
+    </tr>
+    {% for task_id, summary in validity.per_task.items() %}
+    <tr>
+      <td><code>{{ task_id }}</code></td>
+      <td class="metric">{{ "%.2f"|format((summary.valid_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.collision_enabled_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.bbox_valid_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.rigid_body_enabled_rate or 0.0) * 100) }}%</td>
+      <td>{{ "%.2f"|format((summary.object_index_consistency_rate or 0.0) * 100) }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/valid-ood/validity-chart.svg" alt="Valid OOD validity chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+  {% if not validity.any_valid %}
+  <div class="card" style="background:#fff4e6;">
+    <strong>⚠️ OOD adaptation is blocked.</strong> Valid OOD cube validity has not passed. Skill evaluation cannot proceed until the object state is valid.
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><p>No valid OOD validity audit data yet.</p></div>
+{% endif %}
+
+{% if has_matrix %}
+<div class="card">
+  <h2>Object Geometry Adapter Matrix</h2>
+  <p>Source: <code>{{ matrix._source_path }}</code></p>
+  <table>
+    <tr><th>Condition</th><th>Count</th><th>Success Rate</th><th>Lifted Rate</th><th>Mean Progress</th></tr>
+    {% for condition, summary in matrix.by_condition.items() %}
+    <tr>
+      <td><code>{{ condition }}</code></td>
+      <td class="metric">{{ summary.count }}</td>
+      <td class="metric">{{ "%.2f"|format((summary.success_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.lifted_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.3f"|format(summary.mean_progress or 0.0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/valid-ood/matrix-chart.svg" alt="Valid OOD matrix chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No valid OOD adaptation matrix data yet.</p></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,51 @@
+id: goal_pose_rosclaw_valid_cube_low_friction
+name: Goal Pose ROSClaw Valid Cube valid_cube_low_friction
+version: "1.0"
+description: goal_pose with a rosclaw-validated procedural_cube variant (size=0.050 m, mass=0.050 kg).
+source: native
+domain: manipulation
+horizon: atomic
+scene:
+  name: table_simple
+  domain: table
+primitives:
+  - name: Orient
+    args:
+      target: cube
+objects:
+  - name: cube
+    category: graspable
+    affordances: [graspable]
+embodiment:
+  robot: franka
+  control_mode: ik
+constraints: []
+eval:
+  max_steps: 300
+  max_episodes: 5
+  success_conditions: [pose_reached]
+  metrics: [success_rate, completion_time]
+mutation:
+  allowed: [spatial, object, constraint]
+  difficulty: 1
+  seed: 42
+tags: [table, atomic, pose, rosclaw_valid_ood]
+metadata:
+  difficulty: 1.0
+  benchmark_scope: rosclaw_ood_diagnostic
+  official_asset: false
+  can_claim_official_benchmark: false
+  requires_object_validity: true
+  arena_env_args:
+    environment: cube_goal_pose
+    object: procedural_cube
+    embodiment: franka_ik_abs
+  physics_ablation:
+    size:
+      - 0.05
+      - 0.05
+      - 0.05
+    mass: 0.05
+    static_friction: 0.05
+    dynamic_friction: 0.05
+    rosclaw_valid_cube: True

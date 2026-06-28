@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Valid OOD Medium Tasks - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>Valid OOD Medium Task Selection</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/valid-ood-medium/chart.svg" alt="Valid OOD medium tasks chart">
+      <table>
+        <tr><th>Task</th><th>Baseline SR</th><th>First failing subtask</th><th>Dominant failure</th><th>Validity passed</th></tr>
+        {% for task, info in data.selected.items() %}
+        <tr>
+          <td>{{ task }}</td>
+          <td class="metric">{{ "%.1f"|format(info.baseline_success_rate|default(0.0)*100) }}%</td>
+          <td>{{ info.first_failing_subtask|default("—") }}</td>
+          <td>{{ info.dominant_failure|default("—") }}</td>
+          <td>{{ info.validity_passed|default(false) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No valid OOD medium task data available yet.</p></div>
+  {% endif %}
+{% endblock %}

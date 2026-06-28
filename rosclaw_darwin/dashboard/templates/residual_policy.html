@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Residual Policy - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🔧 Residual Policy Statistics</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Residual Policy Overview</h2>
+  <p>Metadata: <code>{{ data.metadata_path or "—" }}</code> · Stats: <code>{{ data.stats_path or "—" }}</code></p>
+  <table>
+    <tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Residual Trigger Rate</td><td class="metric">{{ "%.2f"|format((data.trigger_rate or 0.0) * 100) }}%</td></tr>
+    <tr><td>Clamp Rate</td><td class="metric">{{ "%.2f"|format((data.clamp_rate or 0.0) * 100) }}%</td></tr>
+    <tr><td>Success Frames</td><td class="metric">{{ data.success_frames or 0 }}</td></tr>
+    <tr><td>Failure Frames</td><td class="metric">{{ data.failure_frames or 0 }}</td></tr>
+    <tr><td>Total Frames</td><td class="metric">{{ data.total_frames or 0 }}</td></tr>
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/residual-policy/chart.svg" alt="Residual policy statistics chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No residual policy statistics available yet.</p></div>
+{% endif %}
+{% endblock %}

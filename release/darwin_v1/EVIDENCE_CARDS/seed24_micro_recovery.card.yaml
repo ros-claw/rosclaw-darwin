@@ -1,0 +1,39 @@
+name: seed24_micro_recovery
+type: recovery
+summary: Rescued seeds 24 and 198 without regressing the 0:199 baseline.
+candidate:
+  name: seed24_micro_recovery
+  intervention_type: recovery
+  trigger_signals: []
+  action_type: parameter_override
+  policy_config_path: null
+  recovery_policy: null
+  residual_model_path: null
+  trigger_model_path: null
+  intended_scope: []
+  safety_limits: {}
+  status: candidate_recovery
+task_validity: null
+failure_signature: null
+paired_evidence: null
+promotion_decision:
+  candidate_name: seed24_micro_recovery
+  status: candidate_recovery
+  claim_level: experimental
+  evidence_refs: []
+  passed_gates: []
+  failed_gates: []
+  limitations: []
+  allowed_claims: []
+  disallowed_claims: []
+  next_required_evidence: []
+  fth_status: null
+demo_scope: []
+limitations: []
+allowed_claims:
+- Darwin can promote a candidate recovery based on paired no-regression evidence.
+blocked_claims:
+- validated transferable skill is not claimed
+- official 100/100 solved is not claimed
+artifacts: {}
+created_at: null

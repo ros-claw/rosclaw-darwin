@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Blocked External - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🚧 Blocked External</h1><p>Failures outside current system capability, routed to external escalation.</p></div>
+<div class="card"><h2>Blocked Items</h2>
+{% if blocked %}
+<table><tr><th>Name</th><th>Reason</th><th>Next Step</th></tr>
+{% for item in blocked %}
+<tr><td>{{ item.name }}</td><td>{{ item.reason }}</td><td>{{ item.next_step }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No blocked external items recorded.</p>
+{% endif %}</div>
+{% endblock %}

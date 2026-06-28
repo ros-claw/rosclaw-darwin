@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Official v1.9 Benchmark - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🏅 Official Benchmark Trajectory (v1.9 view)</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>v1.9 Baseline + Seed24 Micro-Recovery Gate Status</h2>
+  <p>Source: <code>{{ data._source_path or "—" }}</code></p>
+  <table>
+    <tr><th>Metric</th><th>Value</th><th>Gate</th><th>Status</th></tr>
+    <tr>
+      <td>Success Rate</td>
+      <td class="metric">{{ "%.2f"|format((data.success_rate or 0.0) * 100) }}%</td>
+      <td>≥ 99%</td>
+      <td>
+        {% if data.success_rate is not none and data.success_rate >= (data.gate_success or 0.99) %}
+        <span class="badge badge-success">PASS</span>
+        {% else %}
+        <span class="badge badge-fail">FAIL</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>Trigger Rate</td>
+      <td class="metric">{{ "%.2f"|format((data.trigger_rate or 0.0) * 100) }}%</td>
+      <td>≤ 5%</td>
+      <td>
+        {% if data.trigger_rate is not none and data.trigger_rate <= (data.gate_trigger or 0.05) %}
+        <span class="badge badge-success">PASS</span>
+        {% else %}
+        <span class="badge badge-fail">FAIL</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>Episodes</td>
+      <td class="metric">{{ data.num_episodes or "—" }}</td>
+      <td>—</td>
+      <td>—</td>
+    </tr>
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/official-v19/chart.svg" alt="Official v1.9 benchmark chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No official v1.9 benchmark data available yet.</p></div>
+{% endif %}
+{% endblock %}

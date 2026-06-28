@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Evidence Cards - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🃏 Evidence Cards</h1><p>Productized evidence for every promotion decision.</p></div>
+<div class="card"><h2>Cards</h2>
+{% if cards %}
+<table><tr><th>Name</th><th>Type</th><th>Status</th><th>Summary</th></tr>
+{% for card in cards %}
+<tr><td>{{ card.name }}</td><td>{{ card.type }}</td><td><span class="badge {% if card.promotion_decision.status == 'candidate_recovery' %}badge-success{% elif card.promotion_decision.status == 'blocked_external' %}badge-fail{% else %}badge{% endif %}">{{ card.promotion_decision.status }}</span></td><td>{{ card.summary }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No evidence cards. Run <code>rosclaw darwin generate-demo-cards</code>.</p>
+{% endif %}</div>
+{% endblock %}

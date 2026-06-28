@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Residual Policy v2 - ROSClaw-Darwin{% endblock %}
+
+{% block content %}
+  <h1>Residual Policy v2 Safety</h1>
+  {% if has_data %}
+    <div class="card">
+      <img src="/residual-policy-v2/chart.svg" alt="Residual policy v2 safety chart">
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Trigger rate</td><td class="metric">{{ "%.2f"|format(data.trigger_rate|default(0.0)*100) }}%</td></tr>
+        <tr><td>Clamp rate</td><td class="metric">{{ "%.2f"|format(data.clamp_rate|default(0.0)*100) }}%</td></tr>
+        <tr><td>Success-frame modification rate</td><td class="metric">{{ "%.2f"|format(data.success_frame_modification_rate|default(0.0)*100) }}%</td></tr>
+        <tr><td>False positive rate</td><td class="metric">{{ "%.2f"|format(data.false_positive_rate|default(0.0)*100) }}%</td></tr>
+        <tr><td>Offline gate passed</td><td class="metric">{{ data.offline_gate_passed|default(false) }}</td></tr>
+      </table>
+    </div>
+  {% else %}
+    <div class="card"><p>No residual policy v2 data available yet.</p></div>
+  {% endif %}
+{% endblock %}

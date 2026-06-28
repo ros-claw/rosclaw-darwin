@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}Baselines - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🏅 Official Baselines</h1><p>Clean benchmark baselines on valid official assets.</p></div>
+<div class="card"><h2>Baseline Results</h2>
+{% if has_data %}
+<table><tr><th>Task</th><th>Success Rate</th><th>Episodes</th><th>Scope</th></tr>
+<tr><td>{{ data.task_id or data.get('task_id', 'unknown') }}</td><td class="metric">{{ "%.2f%%"|format((data.success_rate or data.get('success_rate', 0.0)) * 100) }}</td><td>{{ data.num_episodes or data.get('num_episodes', '-') }}</td><td>official_arena_asset</td></tr>
+</table>
+{% else %}
+<p>No official baseline data available.</p>
+{% endif %}</div>
+{% endblock %}

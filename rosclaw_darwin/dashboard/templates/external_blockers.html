@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}External Blockers - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🚧 External Blockers and Arena Issue Tracker</h1></div>
+{% if has_data %}
+<div class="card">
+  <pre style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; line-height: 1.5;">{{ text }}</pre>
+</div>
+{% else %}
+<div class="card"><p>Arena issue tracker not found at <code>reports/ARENA_ISSUE_TRACKER.md</code>.</p></div>
+{% endif %}
+{% endblock %}

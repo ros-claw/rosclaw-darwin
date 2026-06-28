@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Large-Yaw Intervention - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🧭 Large-Yaw Targeted Intervention Ablation</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Intervention Summary by Condition and Target Yaw</h2>
+  <p>Source: <code>{{ data._source_path }}</code></p>
+  <table>
+    <tr>
+      <th>Condition</th>
+      <th>Target Yaw</th>
+      <th>Count</th>
+      <th>Env Success</th>
+      <th>Lifted Rate</th>
+      <th>Orient Achieved</th>
+      <th>Mean Coupling Score</th>
+      <th>Category Distribution</th>
+    </tr>
+    {% for condition_key, summary in data.per_condition.items() %}
+    <tr>
+      <td><code>{{ summary.condition }}</code></td>
+      <td class="metric">{{ "%.4f"|format(summary.target_yaw or 0.0) }}</td>
+      <td class="metric">{{ summary.count }}</td>
+      <td class="metric">{{ "%.2f"|format((summary.env_success_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.lifted_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.2f"|format((summary.orientation_achieved_rate or 0.0) * 100) }}%</td>
+      <td class="metric">{{ "%.3f"|format(summary.mean_yaw_coupling_score or 0.0) }}</td>
+      <td><code>{{ summary.category_distribution }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/large-yaw-intervention/chart.svg" alt="Large yaw intervention chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+  <div class="card" style="background:#fff4e6;">
+    {% if data.verdict and data.verdict.status == "pass" %}
+    <strong>✅ Minimum criterion met.</strong> {{ data.verdict.message }}
+    {% else %}
+    <strong>⚠️ Intervention hypotheses rejected.</strong> {{ data.verdict.message if data.verdict else "Neither grasp_at_target_yaw nor low_height_incremental_yaw improved orientation achievement by ≥20% relative on π/2 or 2π/3. Large-yaw slip remains unresolved." }}
+    {% endif %}
+  </div>
+  {% if data.verdict and data.verdict.per_yaw %}
+  <div class="card">
+    <h3>Per-Yaw Improvement</h3>
+    <table>
+      <tr><th>Target Yaw</th><th>Baseline Rate</th><th>Table Push-Align Rate</th><th>Relative Improvement</th><th>Pass</th></tr>
+      {% for yaw, info in data.verdict.per_yaw.items() %}
+      <tr>
+        <td class="metric">{{ yaw }}</td>
+        <td class="metric">{{ "%.2f"|format((info.baseline_rate or 0.0) * 100) }}%</td>
+        <td class="metric">{{ "%.2f"|format((info.table_rate or 0.0) * 100) }}%</td>
+        <td class="metric">{{ "%.1f"|format((info.relative_improvement or 0.0) * 100) }}%</td>
+        <td class="metric">{{ "✅" if info.passed else "❌" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><p>Large-yaw intervention ablation data not yet available. Run <code>scripts/ablations/run_large_yaw_intervention_ablation.py</code> to populate.</p></div>
+{% endif %}
+{% endblock %}

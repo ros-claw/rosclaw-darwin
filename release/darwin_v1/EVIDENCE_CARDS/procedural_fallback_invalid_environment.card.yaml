@@ -1,0 +1,37 @@
+name: procedural_fallback_invalid_environment
+type: blocked_external
+summary: Procedural cube fallback has disabled collision and invalid bbox.
+candidate: null
+task_validity:
+  task_id: goal_pose_procedural_cube_fallback
+  benchmark_scope: invalid_environment
+  validity_status: invalid
+  asset_fallback_used: false
+  official_asset: false
+  can_claim_official_benchmark: false
+  can_claim_ood_diagnostic: false
+  object_validity: null
+  reason: []
+failure_signature: null
+paired_evidence: null
+promotion_decision:
+  candidate_name: procedural_fallback_invalid_environment
+  status: blocked_external
+  claim_level: experimental
+  evidence_refs: []
+  passed_gates: []
+  failed_gates: []
+  limitations: []
+  allowed_claims: []
+  disallowed_claims: []
+  next_required_evidence: []
+  fth_status: null
+demo_scope: []
+limitations: []
+allowed_claims:
+- Darwin prevents invalid benchmark environments from polluting skill evaluation.
+blocked_claims:
+- policy failure on procedural cube is not claimed
+- cross-object generalization failure is not claimed
+artifacts: {}
+created_at: null

@@ -1,0 +1,28 @@
+name: learned_trigger_bounded_residual_experimental
+type: recovery
+summary: Learned trigger + bounded residual is safe but did not rescue any seeds.
+candidate: null
+task_validity: null
+failure_signature: null
+paired_evidence: null
+promotion_decision:
+  candidate_name: learned_trigger_bounded_residual_experimental
+  status: experimental_only
+  claim_level: experimental
+  evidence_refs: []
+  passed_gates: []
+  failed_gates: []
+  limitations: []
+  allowed_claims: []
+  disallowed_claims: []
+  next_required_evidence: []
+  fth_status: null
+demo_scope: []
+limitations: []
+allowed_claims:
+- Component is implemented and live control is safe.
+blocked_claims:
+- It improves success rate
+- It is a promoted recovery
+artifacts: {}
+created_at: null

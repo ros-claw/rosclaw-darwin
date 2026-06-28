@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}FTH v3.3 Routes - ROSClaw-Darwin{% endblock %}
+{% block content %}
+<div class="card"><h1>🛣️ FailureToHint v3.3 Route Distribution</h1></div>
+{% if has_data %}
+<div class="card">
+  <h2>Route Counts</h2>
+  <p>Source: <code>{{ data._source_path or "—" }}</code></p>
+  <table>
+    <tr><th>Route Type</th><th>Count</th><th>Share</th></tr>
+    {% for route_type, count in data.routes.items() %}
+    <tr>
+      <td><code>{{ route_type }}</code></td>
+      <td class="metric">{{ count }}</td>
+      <td class="metric">{{ "%.1f"|format((count / data.total * 100) if data.total else 0) }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:1rem;">
+    <img src="/fth-v33/chart.svg" alt="FTH v3.3 route distribution chart" style="max-width:100%; border:1px solid #dee2e6; border-radius:4px;">
+  </div>
+</div>
+{% else %}
+<div class="card"><p>No FTH v3.3 route distribution data available yet.</p></div>
+{% endif %}
+{% endblock %}

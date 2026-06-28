@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Demos - ROSClaw-Darwin{% endblock %}{% block content %}
+<div class="card"><h1>🎬 v1.0 Demo Pack</h1><p>Five runnable demos mapping to evidence cards.</p></div>
+<div class="card"><h2>Demos</h2>
+<table><tr><th>Demo</th><th>Card</th><th>Status</th></tr>
+<tr><td>Official goal_pose baseline</td><td>official_goalpose_baseline</td><td><span class="badge badge-success">v1.0 baseline</span></td></tr>
+<tr><td>Seed 24 micro-recovery</td><td>seed24_micro_recovery</td><td><span class="badge badge-success">candidate_recovery</span></td></tr>
+<tr><td>Procedural fallback invalidity</td><td>procedural_fallback_invalid_environment</td><td><span class="badge badge-fail">blocked_external</span></td></tr>
+<tr><td>Large-yaw torsional slip</td><td>large_yaw_torsional_slip_blocked_external</td><td><span class="badge badge-fail">blocked_external</span></td></tr>
+<tr><td>Learned trigger + bounded residual</td><td>learned_trigger_bounded_residual_experimental</td><td><span class="badge">experimental_only</span></td></tr>
+</table>
+<p>Run <code>bash demo_pack/commands.sh</code> to execute all demos in smoke mode.</p>
+</div>
+{% endblock %}
