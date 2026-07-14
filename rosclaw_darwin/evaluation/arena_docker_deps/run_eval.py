@@ -485,6 +485,37 @@ def _log_run_eval(msg: str) -> None:
         pass
 
 
+def _write_episode_traces(traces: list[list[dict[str, Any]]]) -> Path | None:
+    """Write captured per-step traces to /workspace/data/traces/episode_trace.jsonl.
+
+    Each line is one step with ``episode``, ``step``, ``mode=non_mock`` and the
+    scalar state extracted from the environment.  This file is bind-mounted back
+    to the host so the Real Arena Minimal Proof can inspect real environment
+    behaviour.
+    """
+    _log_run_eval(f"_write_episode_traces called with {len(traces)} episodes")
+    try:
+        trace_path = Path("/workspace/data/traces/episode_trace.jsonl")
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        record_count = 0
+        with trace_path.open("w", encoding="utf-8") as f:
+            for ep_idx, episode in enumerate(traces):
+                for step_state in episode:
+                    record = dict(step_state)
+                    record["episode"] = ep_idx
+                    record["mode"] = "non_mock"
+                    f.write(json.dumps(record, default=str) + "\n")
+                    record_count += 1
+        _log_run_eval(f"wrote {record_count} trace records to {trace_path}")
+        return trace_path
+    except Exception as exc:
+        _log_run_eval(f"_write_episode_traces failed: {exc}")
+        import traceback
+
+        _log_run_eval(traceback.format_exc())
+        return None
+
+
 def _is_oracle_policy() -> bool:
     """Return True if the configured policy is an oracle/cheat policy."""
     job_meta = dict(_JOB_CONFIG.get("_policy_metadata") or {})
@@ -1022,19 +1053,33 @@ def _write_metrics_file() -> None:
         pass
 
 
-# 1. Monkey-patch rollout_policy BEFORE eval_runner imports it.
-try:
-    from isaaclab_arena.evaluation import policy_runner as _pr_mod
+# 1. Monkey-patch rollout_policy so we can capture per-step traces.
+#    eval_runner imports ``rollout_policy`` by name, and reload_arena_modules()
+#    restores the original later, so we install the patch in a helper and
+#    re-install it after every reload.
+def _install_trace_patch() -> bool:
+    """Install (or re-install) the trace-capturing rollout_policy patch.
+
+    Returns True if the patch was applied successfully.
+    """
+    try:
+        import isaaclab_arena.evaluation.eval_runner as _er_mod
+        import isaaclab_arena.evaluation.policy_runner as _pr_mod
+    except Exception as exc:
+        _log_run_eval(f"_install_trace_patch import failed: {exc}")
+        return False
 
     _orig_rollout = _pr_mod.rollout_policy
 
     def _patched_rollout(env, policy, num_steps=None, num_episodes=None, language_instruction=None):
+        _log_run_eval(f"_patched_rollout called num_steps={num_steps} num_episodes={num_episodes}")
         step_log: list[dict] = []
         current_trace: list[dict[str, Any]] = []
         _captured_episode_traces.clear()
         _orig_step = env.step
 
         def _patched_step(action):
+            nonlocal current_trace
             obs, reward, terminated, truncated, info = _orig_step(action)
             terminated_b = bool(terminated.any().item()) if hasattr(terminated, "any") else bool(terminated)
             truncated_b = bool(truncated.any().item()) if hasattr(truncated, "any") else bool(truncated)
@@ -1062,6 +1107,11 @@ try:
         if current_trace:
             _captured_episode_traces.append(current_trace)
 
+        _log_run_eval(
+            f"_patched_rollout captured {len(_captured_episode_traces)} episodes, {len(step_log)} steps"
+        )
+        _write_episode_traces(_captured_episode_traces)
+
         enriched_metrics = dict(metrics) if metrics else {}
         enriched_metrics["_step_count"] = len(step_log)
         enriched_metrics["_episode_lengths"] = [i["step"] + 1 for i in step_log if i["terminated"] or i["truncated"]]
@@ -1080,8 +1130,27 @@ try:
         return metrics
 
     _pr_mod.rollout_policy = _patched_rollout
-except Exception:
-    pass
+    _er_mod.rollout_policy = _patched_rollout
+    _log_run_eval("trace patch installed on policy_runner and eval_runner")
+    return True
+
+
+_install_trace_patch()
+
+
+# Re-install the trace patch after reload_arena_modules() restores originals.
+try:
+    import isaaclab_arena.utils.reload_modules as _reload_modules_mod_for_trace
+
+    _orig_reload_arena_modules_for_trace = _reload_modules_mod_for_trace.reload_arena_modules
+
+    def _patched_reload_arena_modules_for_trace() -> None:
+        _orig_reload_arena_modules_for_trace()
+        _install_trace_patch()
+
+    _reload_modules_mod_for_trace.reload_arena_modules = _patched_reload_arena_modules_for_trace
+except Exception as _trace_reload_exc:
+    _log_run_eval(f"failed to install reload hook for trace patch: {_trace_reload_exc}")
 
 # 2. Monkey-patch MetricsLogger.append_job_metrics.
 try:

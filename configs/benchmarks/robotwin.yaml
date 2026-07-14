@@ -1,0 +1,13 @@
+name: robotwin
+env_type: robotwin
+backend: lerobot_eval
+primary_metric: success_rate
+required_runtime_tags:
+  - robotwin
+recommended_episodes:
+  smoke: 2
+  standard: 50
+supports:
+  multi_task: false
+  video: true
+  replay: true

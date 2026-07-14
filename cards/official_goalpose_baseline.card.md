@@ -2,6 +2,9 @@
 
 **Type:** baseline
 **Status:** v1.0_baseline
+**Evidence level:** L0_SYNTHETIC_PIPELINE_DEMO
+**Evidence type:** synthetic
+**Runtime eligible:** False
 
 ## Summary
 

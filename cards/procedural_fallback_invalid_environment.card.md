@@ -2,6 +2,9 @@
 
 **Type:** blocked_external
 **Status:** blocked_external
+**Evidence level:** L0_SYNTHETIC_PIPELINE_DEMO
+**Evidence type:** synthetic
+**Runtime eligible:** False
 
 ## Summary
 

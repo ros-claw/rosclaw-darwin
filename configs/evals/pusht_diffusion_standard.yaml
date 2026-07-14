@@ -1,0 +1,40 @@
+schema_version: rosclaw.darwin.eval_spec.v1
+
+id: pusht_diffusion_standard
+backend: lerobot_eval
+runtime: lerobot_default
+
+policy:
+  path: lerobot/diffusion_pusht
+  revision: main
+  device: cuda
+  use_amp: false
+  allow_network: true
+  overrides: {}
+
+environment:
+  type: pusht
+  batch_size: 2
+
+evaluation:
+  n_episodes: 50
+  start_seed: 42
+  timeout_sec: 1800
+  render_episodes: 2
+  recording: false
+
+output:
+  root: data/eval_runs
+  keep_raw: true
+  keep_videos: true
+  keep_worker_dir: false
+
+validity_gates:
+  require_eval_info: true
+  require_expected_episode_count: true
+  require_all_tasks_completed: true
+  allow_nan_primary_metric: false
+
+performance_gates:
+  minimum_success_rate: null
+  minimum_macro_task_success_rate: null

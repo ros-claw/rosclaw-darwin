@@ -1,0 +1,14 @@
+name: isaaclab_arena
+env_type: isaaclab_arena
+backend: lerobot_eval
+primary_metric: success_rate
+required_runtime_tags:
+  - isaaclab_arena
+  - isaacsim
+recommended_episodes:
+  smoke: 2
+  standard: 50
+supports:
+  multi_task: false
+  video: true
+  envhub: true

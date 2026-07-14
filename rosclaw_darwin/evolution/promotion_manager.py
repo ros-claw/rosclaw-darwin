@@ -17,13 +17,18 @@ from rosclaw_darwin.evolution.hint_recipe import HintRecipe
 class PromotionManager:
     """Decide whether a recipe's promotion status is supported by evidence."""
 
-    def __init__(self, paired_eval: PairedEvaluationSummary | None = None):
+    def __init__(
+        self,
+        paired_eval: PairedEvaluationSummary | None = None,
+        paired_summary_dict: dict[str, Any] | None = None,
+    ):
         """Initialize with an optional paired-evaluation summary.
 
         ``None`` means no paired evidence is available; every gatable recipe
         will be downgraded to ``experimental_only``.
         """
         self.paired_eval = paired_eval
+        self.paired_summary_dict = paired_summary_dict
 
     def evaluate(self, recipe: HintRecipe) -> EvidenceStatus:
         """Return the evidence-aware promotion status for ``recipe``."""
@@ -66,6 +71,9 @@ class PromotionManager:
 
         if gate_type == "paired_no_regression":
             return self._evaluate_paired_no_regression(recipe, gate)
+
+        if gate_type == "continuous_metric_rescue":
+            return self._evaluate_continuous_metric_rescue(recipe, gate)
 
         # Unknown gate type: stay experimental to avoid false promotion.
         return EvidenceStatus(
@@ -137,6 +145,99 @@ class PromotionManager:
         else:
             promotion_status = "experimental_only"
             gate_reason = "paired_no_regression gate failed: " + "; ".join(reasons)
+
+        return EvidenceStatus(
+            recipe_name=recipe.name,
+            route_selection=recipe.route_selection,
+            promotion_status=promotion_status,
+            evidence_gate_passed=passed,
+            gate_reason=gate_reason,
+            paired_summary=summary_dict,
+            required_evidence=gate,
+        )
+
+    def _evaluate_continuous_metric_rescue(
+        self,
+        recipe: HintRecipe,
+        gate: dict[str, Any],
+    ) -> EvidenceStatus:
+        """Evaluate a continuous-metric rescue gate from an offline paired summary."""
+        summary = self.paired_summary_dict
+        if summary is None:
+            return EvidenceStatus(
+                recipe_name=recipe.name,
+                route_selection=recipe.route_selection,
+                promotion_status="experimental_only",
+                evidence_gate_passed=False,
+                gate_reason="continuous_metric_rescue gate requires a paired summary dict (none provided).",
+                required_evidence=gate,
+            )
+
+        summary_dict = dict(summary)
+
+        min_seeds = int(gate.get("min_seeds", 1))
+        min_improved = int(gate.get("min_improved_seeds", 1))
+        max_regressed = int(gate.get("max_newly_regressed", 0))
+        mean_final_threshold = gate.get("mean_final_threshold")
+        mean_delta_threshold = gate.get("mean_delta_threshold")
+        mean_action_norm_max = gate.get("mean_action_norm_max")
+
+        reasons: list[str] = []
+        passed = True
+
+        valid_pairs = int(summary_dict.get("valid_pairs", 0))
+        if valid_pairs < min_seeds:
+            reasons.append(f"valid_pairs={valid_pairs} < min={min_seeds}")
+            passed = False
+
+        improved = int(summary_dict.get("metric_improved_count", 0))
+        if improved < min_improved:
+            reasons.append(f"metric_improved_count={improved} < min={min_improved}")
+            passed = False
+
+        regressed = int(summary_dict.get("metric_regressed_count", 0))
+        if regressed > max_regressed:
+            reasons.append(f"metric_regressed_count={regressed} > max={max_regressed}")
+            passed = False
+
+        baseline = summary_dict.get("baseline", {})
+        candidate = summary_dict.get("candidate", {})
+        metric = summary_dict.get("metric", "eef_to_object_distance")
+
+        b_final = baseline.get("eef_to_object_distance_final_mean") if metric != "action_norm" else baseline.get("mean_action_norm")
+        c_final = candidate.get("eef_to_object_distance_final_mean") if metric != "action_norm" else candidate.get("mean_action_norm")
+        if b_final is not None and c_final is not None:
+            if metric == "action_norm":
+                if c_final > b_final:
+                    reasons.append(f"candidate_action_norm={c_final:.4f} > baseline={b_final:.4f}")
+                    passed = False
+            else:
+                if c_final >= b_final:
+                    reasons.append(f"candidate_final={c_final:.4f} >= baseline={b_final:.4f}")
+                    passed = False
+            if mean_final_threshold is not None and c_final > mean_final_threshold:
+                reasons.append(f"candidate_final={c_final:.4f} > threshold={mean_final_threshold}")
+                passed = False
+
+        b_delta = baseline.get("distance_reduction_mean") if metric != "action_norm" else None
+        c_delta = candidate.get("distance_reduction_mean") if metric != "action_norm" else None
+        if b_delta is not None and c_delta is not None and mean_delta_threshold is not None:
+            if c_delta <= b_delta + mean_delta_threshold:
+                reasons.append(f"candidate_delta={c_delta:.4f} <= baseline_delta={b_delta:.4f} + threshold={mean_delta_threshold}")
+                passed = False
+
+        c_action_norm = candidate.get("mean_action_norm")
+        if c_action_norm is not None and mean_action_norm_max is not None:
+            if c_action_norm > mean_action_norm_max:
+                reasons.append(f"candidate_action_norm={c_action_norm:.4f} > max={mean_action_norm_max}")
+                passed = False
+
+        if passed:
+            promotion_status = "real_adapter_fix_recovery"
+            gate_reason = "continuous_metric_rescue gate passed"
+        else:
+            promotion_status = "experimental_only"
+            gate_reason = "continuous_metric_rescue gate failed: " + "; ".join(reasons)
 
         return EvidenceStatus(
             recipe_name=recipe.name,

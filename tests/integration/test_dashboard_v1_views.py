@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-
 from fastapi.testclient import TestClient
 
 from rosclaw_darwin.dashboard.app import DashboardApp

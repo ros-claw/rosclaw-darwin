@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from rosclaw_darwin.evolution.evidence_level import EvidenceLevel, EvidenceType
 from rosclaw_darwin.schemas.evidence_card import EvidenceCard
 from rosclaw_darwin.schemas.intervention import CandidateIntervention
 from rosclaw_darwin.schemas.promotion_decision import PromotionDecision
@@ -141,6 +142,10 @@ class CardGenerator:
         candidate: CandidateIntervention | None = None,
         artifacts: dict[str, str] | None = None,
         summary: str = "",
+        evidence_level: str | None = None,
+        evidence_type: str | None = None,
+        runtime_eligible: bool = False,
+        promotion_scope: str | None = None,
     ) -> EvidenceCard:
         """Build a card from explicit evidence artifacts."""
         decision = promotion_decision or PromotionDecision(
@@ -153,6 +158,10 @@ class CardGenerator:
             promotion_decision=decision,
             artifacts=artifacts or {},
             summary=summary,
+            evidence_level=evidence_level or decision.evidence_level or EvidenceLevel.L0_SYNTHETIC_PIPELINE_DEMO.value,
+            evidence_type=evidence_type or decision.evidence_type or EvidenceType.SYNTHETIC.value,
+            runtime_eligible=runtime_eligible or decision.runtime_eligible,
+            promotion_scope=promotion_scope or decision.promotion_scope,
         )
 
     def save_card(self, card: EvidenceCard, override: bool = False) -> tuple[Path, Path]:
@@ -161,7 +170,9 @@ class CardGenerator:
         md_path = self.cards_dir / f"{card.name}.card.md"
         if yaml_path.exists() and not override:
             raise FileExistsError(f"Card already exists: {yaml_path}")
-        yaml_path.write_text(yaml.dump(card.model_dump(mode="json"), sort_keys=False))
+        yaml_path.write_text(
+            yaml.dump(card.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+        )
         md_path.write_text(render_card_markdown(card))
         return yaml_path, md_path
 
@@ -173,6 +184,9 @@ def render_card_markdown(card: EvidenceCard) -> str:
         "",
         f"**Type:** {card.type}",
         f"**Status:** {card.promotion_decision.status}",
+        f"**Evidence level:** {card.evidence_level}",
+        f"**Evidence type:** {card.evidence_type}",
+        f"**Runtime eligible:** {card.runtime_eligible}",
         "",
         "## Summary",
         "",

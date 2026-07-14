@@ -46,7 +46,7 @@ dev = [
 ]
 
 [project.scripts]
-darwin = "rosclaw_darwin.cli.main:app"
+darwin = "rosclaw_darwin.cli.darwin_app:darwin_app"
 rosclaw-darwin = "rosclaw_darwin.cli.main:app"
 
 [tool.setuptools.packages.find]

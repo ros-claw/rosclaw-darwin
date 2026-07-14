@@ -16,6 +16,7 @@ class TaskValidity(BaseModel):
     benchmark_scope: Literal[
         "official_arena_asset",
         "rosclaw_ood_diagnostic",
+        "libero_10_official_suite",
         "invalid_environment",
     ]
     validity_status: Literal["valid", "invalid", "warning"] = "valid"

@@ -105,8 +105,8 @@ def test_run_docker_mounts_residual_and_trigger_models(tmp_path):
     assert overlay_mount is not None
 
 
-def test_run_docker_missing_model_path_logs_warning(tmp_path, capfd):
-    """Missing model paths are skipped with a warning rather than crashing."""
+def test_run_docker_missing_model_path_is_skipped(tmp_path):
+    """Missing model paths are skipped (not mounted) rather than crashing."""
     residual_path = tmp_path / "missing_residual.json"
     job = {
         "policy_config_dict": {
@@ -119,8 +119,8 @@ def test_run_docker_missing_model_path_logs_warning(tmp_path, capfd):
     stdout = "<<<ROSCLAW_ARENA_METRICS>>>{}<<<ROSCLAW_ARENA_METRICS>>>"
     proc = _make_completed_process(returncode=0, stdout=stdout, stderr="")
 
-    with patch("rosclaw_darwin.evaluation.arena_runner.subprocess.run", return_value=proc):
-        runner._run_docker(
+    with patch("rosclaw_darwin.evaluation.arena_runner.subprocess.run", return_value=proc) as mock_run:
+        result = runner._run_docker(
             job,
             run_id="test_run",
             task_id="goal_pose",
@@ -128,5 +128,7 @@ def test_run_docker_missing_model_path_logs_warning(tmp_path, capfd):
             started_at="2026-06-27T00:00:00Z",
         )
 
-    captured = capfd.readouterr()
-    assert "residual_policy_path references a missing file" in captured.out
+    assert result.status == "completed"
+    cmd = mock_run.call_args[0][0]
+    residual_mount = f"{residual_path}:{residual_path}"
+    assert residual_mount not in cmd

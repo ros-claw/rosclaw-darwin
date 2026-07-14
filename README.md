@@ -60,6 +60,9 @@ darwin registry add --registry demo_outputs/registry \
   --name seed24_micro_recovery \
   --card demo_outputs/cards/seed24_micro_recovery.card.yaml
 
+# Validate evidence artifacts
+darwin evidence validate --cards demo_outputs/cards --reports reports
+
 # Start the dashboard
 darwin dashboard --data data --port 8080
 ```

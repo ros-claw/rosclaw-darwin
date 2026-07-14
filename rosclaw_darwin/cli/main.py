@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from rosclaw_darwin.adapters import get_adapter
 from rosclaw_darwin.adapters.mock import MockAdapter
 from rosclaw_darwin.cli.darwin_app import darwin_app
 from rosclaw_darwin.dashboard.app import DashboardApp
@@ -204,16 +206,8 @@ def run(
     if dry_run:
         policy_config["dry_run"] = True
 
-    if adapter == "mock":
-        env = MockAdapter(t)
-    elif adapter == "arena":
-        try:
-            from rosclaw_darwin.adapters.arena import ArenaAdapter
-            env = ArenaAdapter(t)
-        except ImportError as e:
-            console.print(f"[red]Arena adapter not available: {e}[/red]")
-            console.print("[yellow]Tip: Set ROSCLAW_ARENA_REPO=/path/to/IsaacLab-Arena and install IsaacLab-Arena dependencies[/yellow]")
-            raise typer.Exit(1)
+    if adapter in ("mock", "arena", "libero"):
+        env = get_adapter(adapter, t)
     else:
         console.print(f"[red]Unknown adapter: {adapter}[/red]")
         raise typer.Exit(1)
@@ -256,15 +250,8 @@ def evolve(
     if dry_run:
         policy_config["dry_run"] = True
 
-    if adapter == "mock":
-        env = MockAdapter(t)
-    elif adapter == "arena":
-        try:
-            from rosclaw_darwin.adapters.arena import ArenaAdapter
-            env = ArenaAdapter(t)
-        except ImportError as e:
-            console.print(f"[red]Arena adapter not available: {e}[/red]")
-            raise typer.Exit(1)
+    if adapter in ("mock", "arena", "libero"):
+        env = get_adapter(adapter, t)
     else:
         console.print(f"[red]Unknown adapter: {adapter}[/red]")
         raise typer.Exit(1)
@@ -312,6 +299,7 @@ def suite(
     filter_expr: str | None = typer.Option(None, "--filter", help="Filter expression, e.g. execution.executable=true"),
     auto_skill_hints: bool = typer.Option(False, "--auto-skill-hints", help="Auto-generate skill hints from Loop 1 failures for Loop 2"),
     hint_rules: str = typer.Option("configs/skills/failure_to_hint_rules.yaml", "--hint-rules", help="Path to failure-to-hint rules YAML"),
+    resume: bool = typer.Option(False, "--resume", help="Skip already-completed tasks in the suite"),
 ) -> None:
     """Create or run a task suite."""
     if action == "create":
@@ -372,56 +360,77 @@ def suite(
         policy_config = _load_policy_config(policy)
         policy_config.setdefault("policy_id", Path(policy).stem)
 
-        summary_rows = []
-        for task_path in suite_data.get("tasks", []):
-            console.print(f"  Running {task_path}...")
-            try:
-                t = TaskLoader().load(task_path)
-            except Exception as e:
-                console.print(f"    [red]Failed to load {task_path}: {e}[/red]")
-                summary_rows.append({"task": task_path, "status": "load_error", "error": str(e)})
-                continue
-
-            if adapter == "mock":
-                env = MockAdapter(t)
-            elif adapter == "arena":
-                from rosclaw_darwin.adapters.arena import ArenaAdapter
-                env = ArenaAdapter(t)
+        # Support both flat task-path lists and structured {name, task} entries.
+        raw_tasks = suite_data.get("tasks", [])
+        task_entries: list[tuple[str | None, str]] = []
+        for entry in raw_tasks:
+            if isinstance(entry, dict):
+                task_entries.append((entry.get("name"), entry.get("task")))
+            elif isinstance(entry, str):
+                task_entries.append((None, entry))
             else:
-                console.print(f"[red]Unknown adapter: {adapter}[/red]")
-                raise typer.Exit(1)
+                console.print(f"[yellow]Skipping unknown suite task entry: {entry}[/yellow]")
 
-            runner = EvolutionRunner(env)
-            try:
-                report = runner.evolve(
-                    t,
-                    policy_config,
-                    loops=loops,
-                    episodes=episodes,
-                    auto_skill_hints=auto_skill_hints,
-                    hint_rules_path=hint_rules,
-                )
-            except Exception as e:
-                console.print(f"    [red]Evolution failed: {e}[/red]")
-                summary_rows.append({"task": t.id, "status": "evolution_error", "error": str(e)})
-                continue
+        if adapter == "libero":
+            _run_libero_suite(
+                suite_data=suite_data,
+                task_entries=task_entries,
+                policy_config=policy_config,
+                episodes=episodes,
+                out=out,
+                resume=resume,
+            )
+        else:
+            summary_rows = []
+            for name, task_path in task_entries:
+                console.print(f"  Running {task_path}...")
+                try:
+                    t = TaskLoader().load(task_path)
+                except Exception as e:
+                    console.print(f"    [red]Failed to load {task_path}: {e}[/red]")
+                    summary_rows.append({"task": task_path, "status": "load_error", "error": str(e)})
+                    continue
 
-            evo = report.get("evolution_metrics", {})
-            summary_rows.append({
-                "task": t.id,
-                "status": "completed",
-                "success_rate": report.get("loop_results", [{}])[-1].get("metrics", {}).get("success_rate", 0.0),
-                "delta_success_rate": evo.get("delta_success_rate", 0.0),
-                "skill_discovery_rate": evo.get("skill_discovery_rate", 0.0),
-                "evolution_score": evo.get("evolution_score", 0.0),
-            })
+                if adapter == "mock":
+                    env = MockAdapter(t)
+                elif adapter == "arena":
+                    from rosclaw_darwin.adapters.arena import ArenaAdapter
+                    env = ArenaAdapter(t)
+                else:
+                    console.print(f"[red]Unknown adapter: {adapter}[/red]")
+                    raise typer.Exit(1)
 
-        out_path = Path(out or f"data/suites/{suite_data.get('name')}_summary.json")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(summary_rows, indent=2))
-        console.print(f"[green]Suite summary saved to {out_path}[/green]")
-        for row in summary_rows:
-            console.print(f"  {row}")
+                runner = EvolutionRunner(env)
+                try:
+                    report = runner.evolve(
+                        t,
+                        policy_config,
+                        loops=loops,
+                        episodes=episodes,
+                        auto_skill_hints=auto_skill_hints,
+                        hint_rules_path=hint_rules,
+                    )
+                except Exception as e:
+                    console.print(f"    [red]Evolution failed: {e}[/red]")
+                    summary_rows.append({"task": t.id, "status": "evolution_error", "error": str(e)})
+                    continue
+
+                evo = report.get("evolution_metrics", {})
+                summary_rows.append({
+                    "task": t.id,
+                    "status": "completed",
+                    "success_rate": report.get("loop_results", [{}])[-1].get("metrics", {}).get("success_rate", 0.0),
+                    "delta_success_rate": evo.get("delta_success_rate", 0.0),
+                    "skill_discovery_rate": evo.get("skill_discovery_rate", 0.0),
+                    "evolution_score": evo.get("evolution_score", 0.0),
+                })
+
+            out_path = Path(out or f"data/suites/{suite_data.get('name')}_summary.json")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(summary_rows, indent=2))
+            console.print(f"[green]Suite summary saved to {out_path}[/green]")
+            for row in summary_rows:
+                console.print(f"  {row}")
     else:
         console.print(f"[red]Unknown suite action: {action}[/red]")
         raise typer.Exit(1)
@@ -437,6 +446,153 @@ def dashboard(
     app_obj = DashboardApp(data_dir=data_dir)
     console.print(f"[green]Starting dashboard on http://{host}:{port}[/green]")
     app_obj.run(host=host, port=port)
+
+
+def _run_libero_suite(
+    suite_data: dict[str, Any],
+    task_entries: list[tuple[str | None, str]],
+    policy_config: dict[str, Any],
+    episodes: int,
+    out: str | None,
+    resume: bool = False,
+) -> None:
+    """Run a LIBERO suite natively and emit suite_metrics.json + suite_report.md."""
+    from rosclaw_darwin.adapters.libero import LiberoAdapter
+
+    suite_name = suite_data.get("name", "unnamed_libero_suite")
+    max_steps = int(suite_data.get("max_steps", 720))
+    n_action_steps = int(suite_data.get("n_action_steps", policy_config.get("n_action_steps", 1)))
+    policy_config["n_action_steps"] = n_action_steps
+
+    out_dir = Path(out or f"data/suites/{suite_name}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = out_dir / "suite_metrics.json"
+
+    per_task: list[dict[str, Any]] = []
+    completed_task_ids: set[str] = set()
+    if resume and metrics_path.exists():
+        try:
+            existing = json.loads(metrics_path.read_text(encoding="utf-8"))
+            per_task = list(existing.get("per_task", []))
+            completed_task_ids = {
+                r["task_id"] for r in per_task if r.get("status") == "completed"
+            }
+            console.print(f"[cyan]Resuming suite: {len(completed_task_ids)} tasks already completed[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]Could not load existing suite metrics: {e}[/yellow]")
+
+    for name, task_path in task_entries:
+        console.print(f"  Running LIBERO task {task_path}...")
+        try:
+            t = TaskLoader().load(task_path)
+        except Exception as e:
+            console.print(f"    [red]Failed to load {task_path}: {e}[/red]")
+            per_task.append({
+                "task_id": name or task_path,
+                "task_path": task_path,
+                "status": "load_error",
+                "error": str(e),
+            })
+            continue
+
+        if resume and t.id in completed_task_ids:
+            console.print(f"    [green]Skipping completed task {t.id}[/green]")
+            continue
+
+        adapter = LiberoAdapter(t, n_action_steps=n_action_steps)
+        try:
+            result = adapter.run_policy(
+                policy_config,
+                episodes=episodes,
+                max_steps=max_steps,
+            )
+        except Exception as e:
+            console.print(f"    [red]Task run failed: {e}[/red]")
+            per_task.append({
+                "task_id": t.id,
+                "task_path": task_path,
+                "status": "run_error",
+                "error": str(e),
+            })
+            continue
+        finally:
+            adapter.close()
+
+        metrics = dict(result.metrics)
+        per_task.append({
+            "task_id": t.id,
+            "task_name": name,
+            "task_path": task_path,
+            "status": "completed",
+            "success_rate": metrics.get("success_rate", 0.0),
+            "num_episodes": metrics.get("num_episodes", float(episodes)),
+            "mean_steps": metrics.get("mean_steps", 0.0),
+        })
+
+    completed = [r for r in per_task if r.get("status") == "completed"]
+    total_episodes = sum(r["num_episodes"] for r in completed)
+    total_successes = sum(r["success_rate"] * r["num_episodes"] for r in completed)
+    macro_sr = sum(r["success_rate"] for r in completed) / len(completed) if completed else 0.0
+    micro_sr = total_successes / total_episodes if total_episodes else 0.0
+    hardest = min(completed, key=lambda r: r["success_rate"])["task_id"] if completed else None
+    easiest = max(completed, key=lambda r: r["success_rate"])["task_id"] if completed else None
+
+    suite_metrics = {
+        "suite": suite_name,
+        "backend": "libero",
+        "policy_id": policy_config.get("policy_id", "unknown"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "per_task": per_task,
+        "suite_level": {
+            "macro_success_rate": macro_sr,
+            "micro_success_rate": micro_sr,
+            "total_episodes": total_episodes,
+            "total_successes": total_successes,
+            "completed_tasks": len(completed),
+            "failed_tasks": len(per_task) - len(completed),
+            "hardest_task": hardest,
+            "easiest_task": easiest,
+        },
+    }
+
+    metrics_path.write_text(json.dumps(suite_metrics, indent=2), encoding="utf-8")
+
+    report_lines = [
+        f"# Suite Report: {suite_name}",
+        "",
+        "- Backend: libero",
+        f"- Policy: {policy_config.get('policy_id', 'unknown')}",
+        f"- Episodes per task: {episodes}",
+        f"- Macro success rate: {macro_sr:.2%}",
+        f"- Micro success rate: {micro_sr:.2%}",
+        "",
+        "## Per-task results",
+        "",
+        "| Task | Status | Success rate | Episodes | Mean steps |",
+        "|---|---|---|---|---|",
+    ]
+    for r in per_task:
+        report_lines.append(
+            f"| {r.get('task_id', '-')} | {r.get('status', '-')} | "
+            f"{r.get('success_rate', 0.0):.2%} | {r.get('num_episodes', 0):.0f} | "
+            f"{r.get('mean_steps', 0.0):.1f} |"
+        )
+    report_lines.extend([
+        "",
+        "## Disclaimer",
+        "",
+        "This is a Darwin-native LIBERO suite evaluation. It is **not** an official",
+        "LIBERO leaderboard submission; tasks, seeds, and success criteria are",
+        "reported for infrastructure verification only.",
+    ])
+    report_path = out_dir / "suite_report.md"
+    report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+
+    console.print("[green]LIBERO suite completed[/green]")
+    console.print(f"  Macro SR: {macro_sr:.2%}")
+    console.print(f"  Micro SR: {micro_sr:.2%}")
+    console.print(f"  Metrics: {metrics_path}")
+    console.print(f"  Report: {report_path}")
 
 
 def _load_policy_config(path: str) -> dict[str, Any]:

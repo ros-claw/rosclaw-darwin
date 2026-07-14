@@ -1064,11 +1064,24 @@ class ArenaAdapter(BaseEnvironmentAdapter):
                 policy_type = "isaaclab_arena.policy.onnx_wbc_action_policy.OnnxWbcActionPolicy"
             if policy_type == "rsl_rl":
                 policy_type = "isaaclab_arena.policy.rsl_rl_action_policy.RslRlActionPolicy"
+            if policy_type == "external_http":
+                policy_type = "external_http_policy.ExternalHTTPPolicy"
+
+            # Start from any explicit policy_config_dict, then layer container-side
+            # overrides from the top-level policy YAML.
+            policy_config_dict = dict(policy_config.get("policy_config_dict", {}))
+
+            # Forward HTTP endpoint / guard config from top-level policy config into
+            # the container-side policy_config_dict for external_http policies.
+            if policy_type.startswith("external_http_policy."):
+                for key in ("endpoint", "timeout_seconds", "headers", "action_key", "observation_format", "guard", "task_id", "instruction"):
+                    if key in policy_config and key not in policy_config_dict:
+                        policy_config_dict[key] = policy_config[key]
+
             # Forward skill hints into the policy's config dict so Arena-side
             # heuristic policies can consume them. Only pass the key to policies
             # that declare a config_class accepting it; builtin policies like
             # zero_action do not tolerate unknown kwargs.
-            policy_config_dict = dict(policy_config.get("policy_config_dict", {}))
             if policy_type.startswith("heuristic_policy."):
                 # Preserve hints already inside policy_config_dict; allow top-level override.
                 existing_hints = list(policy_config_dict.get("skill_hints", []))

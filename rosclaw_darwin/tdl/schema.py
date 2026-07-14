@@ -28,6 +28,7 @@ class TaskSource(str, Enum):
 
 class ExecutionBackend(str, Enum):
     arena = "arena"
+    libero = "libero"
     robotwin_replay = "robotwin_replay"
     behavior_semantic = "behavior_semantic"
     mock = "mock"

@@ -54,6 +54,10 @@ class PromotionRegistry:
         status: str,
         card: str | None = None,
         owner: str = "darwin",
+        evidence_level: str | None = None,
+        evidence_type: str | None = None,
+        runtime_eligible: bool | None = None,
+        promotion_scope: str | None = None,
     ) -> RegistryItem:
         """Add or update a registry item."""
         now = datetime.now(timezone.utc).isoformat()
@@ -63,6 +67,15 @@ class PromotionRegistry:
             raise ValueError(
                 f"Cannot promote {item_id} from {existing.status if existing else 'new'} to {status}"
             )
+
+        runtime_statuses = {
+            "candidate_recovery",
+            "validated_recovery",
+            "validated_transferable_skill",
+            "real_adapter_fix_recovery",
+            "real_evaluation_recipe_preferred",
+        }
+        enabled_for_runtime = status in runtime_statuses
         item = RegistryItem(
             id=item_id,
             kind=kind,
@@ -71,8 +84,12 @@ class PromotionRegistry:
             created_at=created_at,
             updated_at=now,
             owner=owner,
-            enabled_for_runtime=status in {"candidate_recovery", "validated_recovery", "validated_transferable_skill"},
+            enabled_for_runtime=enabled_for_runtime,
             requires_human_approval=status == "human_escalation",
+            evidence_level=evidence_level or existing.evidence_level if existing else RegistryItem.model_fields["evidence_level"].default,
+            evidence_type=evidence_type or existing.evidence_type if existing else RegistryItem.model_fields["evidence_type"].default,
+            runtime_eligible=runtime_eligible if runtime_eligible is not None else (existing.runtime_eligible if existing else enabled_for_runtime),
+            promotion_scope=promotion_scope or existing.promotion_scope if existing else None,
         )
         self._items[item_id] = item
         self._save()

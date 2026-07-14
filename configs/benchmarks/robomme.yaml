@@ -1,0 +1,15 @@
+name: robomme
+env_type: robomme
+backend: lerobot_eval
+primary_metric: success_rate
+required_runtime_tags:
+  - robomme
+  - sapien
+recommended_episodes:
+  smoke: 2
+  standard: 50
+supports:
+  multi_task: true
+  task_ids: true
+  video: false
+  docker: true

@@ -211,7 +211,7 @@ class ArenaRunner:
             # container at the location the policy/run_eval expect.
             trace_dir = job.get("_trace_dir")
             if trace_dir:
-                trace_path = Path(trace_dir)
+                trace_path = Path(trace_dir).resolve()
                 trace_path.mkdir(parents=True, exist_ok=True)
                 trace_mount_src = str(trace_path)
             else:
@@ -229,6 +229,7 @@ class ArenaRunner:
                 "-e", "HDF5_USE_FILE_LOCKING=FALSE",
                 "-e", "PYTHONDONTWRITEBYTECODE=1",
                 "-e", "ROSCLAW_TRACE_DIR=/workspace/data/traces",
+                "--add-host", "host.docker.internal:host-gateway",
             ]
             # Forward seed/placement_seed from the job into the container so the
             # environment builder can vary initial conditions consistently.
@@ -236,6 +237,12 @@ class ArenaRunner:
                 cmd.extend(["-e", f"ROSCLAW_ARENA_SEED={job['seed']}"])
             if job.get("placement_seed") is not None:
                 cmd.extend(["-e", f"ROSCLAW_ARENA_PLACEMENT_SEED={job['placement_seed']}"])
+
+            # Forward the external policy endpoint so container-side HTTP policies
+            # can resolve it without hard-coding host networking details.
+            policy_cfg = job.get("policy_config_dict") or {}
+            if policy_cfg.get("endpoint"):
+                cmd.extend(["-e", f"EXTERNAL_POLICY_ENDPOINT={policy_cfg['endpoint']}"])
 
             # Mount optional route-classifier model so the container can load it.
             policy_cfg = job.get("policy_config_dict") or {}
@@ -322,6 +329,8 @@ class ArenaRunner:
                 "-v", f"{DEPS_DIR / 'lightwheel_patch.py'}:/workspace/data/lightwheel_patch.py",
                 # Mount heuristic policy (can be referenced by full module path)
                 "-v", f"{DEPS_DIR / 'heuristic_policy.py'}:/workspace/data/heuristic_policy.py",
+                # Mount external HTTP policy so Arena can call host-loopback endpoints.
+                "-v", f"{DEPS_DIR / 'external_http_policy.py'}:/workspace/data/external_http_policy.py",
                 # Mount small learned route classifier so the heuristic policy can
                 # load it locally inside the container (rosclaw_darwin is not installed).
                 "-v", f"{DEPS_DIR / 'route_classifier.py'}:/workspace/data/route_classifier.py",

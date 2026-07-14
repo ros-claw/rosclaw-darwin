@@ -1,0 +1,13 @@
+name: metaworld
+env_type: metaworld
+backend: lerobot_eval
+primary_metric: success_rate
+required_runtime_tags:
+  - metaworld
+recommended_episodes:
+  smoke: 2
+  standard: 50
+supports:
+  multi_task: true
+  task_ids: true
+  video: false

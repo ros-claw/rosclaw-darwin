@@ -13,7 +13,6 @@ from typing import Any
 
 import yaml
 
-
 DEFAULT_UNSUPPORTED_PHRASES = [
     "validated transferable skill",
     "large-yaw solved",

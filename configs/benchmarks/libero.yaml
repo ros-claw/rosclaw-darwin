@@ -1,0 +1,16 @@
+name: libero
+env_type: libero
+backend: lerobot_eval
+primary_metric: success_rate
+required_runtime_tags:
+  - libero
+supports:
+  multi_task: true
+  task_ids: true
+  control_mode: true
+suites:
+  - libero_spatial
+  - libero_object
+  - libero_goal
+  - libero_90
+  - libero_10

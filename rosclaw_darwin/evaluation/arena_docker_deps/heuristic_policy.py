@@ -5550,3 +5550,106 @@ class JointSpaceCalibrationPolicy(PolicyBase):
     @staticmethod
     def from_args(args: argparse.Namespace) -> "JointSpaceCalibrationPolicy":
         return JointSpaceCalibrationPolicy(JointSpaceCalibrationPolicyArgs.from_cli_args(args))
+
+
+@dataclass
+class DegradedNegativeControlPolicyArgs:
+    """Configuration for the deterministic negative-control policy."""
+
+    delta_x: float = 1.0
+    delta_y: float = 0.5
+    delta_z: float = -0.5
+    gripper_command: float = -1.0
+    skill_hints: list[str] = field(default_factory=list)
+    object_geometry: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "DegradedNegativeControlPolicyArgs":
+        return cls(
+            delta_x=float(getattr(args, "delta_x", cls.delta_x)),
+            delta_y=float(getattr(args, "delta_y", cls.delta_y)),
+            delta_z=float(getattr(args, "delta_z", cls.delta_z)),
+            gripper_command=float(getattr(args, "gripper_command", cls.gripper_command)),
+        )
+
+
+class DegradedNegativeControlPolicy(PolicyBase):
+    """Deterministic negative-control policy for real-env rejection proof.
+
+    Outputs a constant, large, open-loop delta-pose command every step. This is
+    expected to perform worse than the zero-action baseline and should be rejected
+    by any reasonable action-admissibility or task-metric gate.
+    """
+
+    name = "degraded_negative_control"
+    config_class = DegradedNegativeControlPolicyArgs
+
+    def __init__(self, config: DegradedNegativeControlPolicyArgs):
+        super().__init__(config)
+        self._step = 0
+        self._episode_idx = 0
+        self._delta = torch.tensor([
+            float(config.delta_x),
+            float(config.delta_y),
+            float(config.delta_z),
+        ])
+        self._gripper_command = float(config.gripper_command)
+        try:
+            if os.path.exists(_TRACE_PATH):
+                os.remove(_TRACE_PATH)
+        except Exception:
+            pass
+
+    def get_action(self, env: gym.Env, observation: GymSpacesDict) -> torch.Tensor:
+        device = torch.device(env.unwrapped.device)
+        action = torch.zeros(env.action_space.shape, device=device)
+        action_dim = action.shape[-1]
+
+        # Apply constant deltas to the first three pose axes.
+        for i in range(min(3, action_dim)):
+            action[..., i] = self._delta[i].item()
+
+        # Gripper command is the last dimension when present.
+        if action_dim >= 7:
+            action[..., -1] = self._gripper_command
+
+        # Record a minimal trace record.
+        try:
+            eef_pos = None
+            scene = env.unwrapped.scene
+            if "ee_frame" in scene.keys():
+                data = scene["ee_frame"].data
+                for attr in ("target_pos_w", "source_pos_w", "pos_w"):
+                    if hasattr(data, attr):
+                        pos = getattr(data, attr).squeeze().to(device)
+                        if pos.ndim > 1:
+                            pos = pos[0]
+                        if pos.numel() >= 3:
+                            eef_pos = pos
+                            break
+            if eef_pos is not None:
+                _append_trace({
+                    "episode": self._episode_idx,
+                    "step": self._step,
+                    "eef_x": float(eef_pos[0].item()),
+                    "eef_y": float(eef_pos[1].item()),
+                    "eef_z": float(eef_pos[2].item()),
+                    "action_norm": float(torch.linalg.norm(action).item()),
+                })
+        except Exception:
+            pass
+
+        self._step += 1
+        return action
+
+    def reset(self, env_ids: torch.Tensor | None = None) -> None:
+        self._step = 0
+        self._episode_idx += 1
+
+    @staticmethod
+    def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        return parser
+
+    @staticmethod
+    def from_args(args: argparse.Namespace) -> "DegradedNegativeControlPolicy":
+        return DegradedNegativeControlPolicy(DegradedNegativeControlPolicyArgs.from_cli_args(args))

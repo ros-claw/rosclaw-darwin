@@ -27,6 +27,10 @@ promotion_decision:
   disallowed_claims: []
   next_required_evidence: []
   fth_status: null
+  evidence_level: L0_SYNTHETIC_PIPELINE_DEMO
+  evidence_type: synthetic
+  runtime_eligible: false
+  promotion_scope: null
 demo_scope: []
 limitations: []
 allowed_claims:
@@ -36,3 +40,8 @@ blocked_claims:
 - official Arena leaderboard result is not claimed
 artifacts: {}
 created_at: null
+evidence_level: L0_SYNTHETIC_PIPELINE_DEMO
+evidence_type: synthetic
+runtime_eligible: false
+promotion_scope: null
+execution_grounding: G0_PROTOCOL_SIMULATION

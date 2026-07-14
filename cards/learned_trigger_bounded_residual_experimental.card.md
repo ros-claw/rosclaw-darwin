@@ -2,6 +2,9 @@
 
 **Type:** recovery
 **Status:** experimental_only
+**Evidence level:** L0_SYNTHETIC_PIPELINE_DEMO
+**Evidence type:** synthetic
+**Runtime eligible:** False
 
 ## Summary
 

@@ -1,5 +1,20 @@
 # ROSClaw-Darwin Reports Index
 
+## v1.5 — Standalone Physical-AI evaluation infrastructure + Arena learned-policy baseline
+
+- [v1.5 Proof Report](DARWIN_V1_5_PROOF_REPORT.md) — final verdict: P0 standalone proved, P1 Arena learned-policy proved via honest toy BC fallback, P2 candidate evolution proved on synthetic baseline only, real-robot/transferred skill not claimed.
+- [v1.5 Standalone Physical-AI Evaluation Infrastructure Report](DARWIN_V1_5_STANDALONE_PHYSICAL_AI_EVALUATION_INFRASTRUCTURE_REPORT.md) — docs, CLI, install, reproducibility package, and standalone gate results.
+- [v1.5 Scope Freeze Report](DARWIN_V1_5_SCOPE_FREEZE_REPORT.md) — scope, acceptance criteria, and always-blocked claims.
+- [Core Protocol Hardening Report](DARWIN_CORE_PROTOCOL_HARDENING_REPORT.md) — spec docs, evidence taxonomy, and claim-boundary hardening.
+- [Standalone Install and Run Report](DARWIN_STANDALONE_INSTALL_RUN_REPORT.md) — installation smoke test and CLI verification.
+- [Reproducibility Package Report](DARWIN_REPRODUCIBILITY_PACKAGE_REPORT.md) — reproducibility bundle, checksums, and verification.
+- [Arena Learned-Policy Proof Report](DARWIN_ARENA_LEARNED_POLICY_PROOF_REPORT.md) — official workflow unavailable, toy BC fallback infrastructure proof, and Sprint 5 synthetic candidate-evolution results.
+- [Arena Toy Learned-Policy Baseline Report](DARWIN_ARENA_TOY_LEARNED_POLICY_BASELINE_REPORT.md) — toy BC training/evaluation results and artifacts.
+- [Arena Candidate Evolution Report](DARWIN_ARENA_CANDIDATE_EVOLUTION_REPORT.md) — Sprint 5 negative-control rejection and chunk-fix rescue on the synthetic baseline.
+- [Arena Official Workflow Availability Report](ARENA_OFFICIAL_WORKFLOW_AVAILABILITY_REPORT.md) — honest probe result: official workflow not runnable.
+- [Cross-Backend Evidence Matrix Report](DARWIN_CROSS_BACKEND_EVIDENCE_MATRIX_REPORT.md) — L0–L8 evidence mapping across Arena and LIBERO.
+- [Backend Capability Matrix](DARWIN_BACKEND_CAPABILITY_MATRIX.md) — human-readable backend maturity matrix.
+
 ## Result semantics and infrastructure
 
 - [Result Semantics](RESULT_SEMANTICS.md) — how to interpret mock, real, and evolution results.

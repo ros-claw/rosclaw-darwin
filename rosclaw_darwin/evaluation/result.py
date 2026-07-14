@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from rosclaw_darwin.evolution.evidence_level import ExecutionGroundingLevel
+
 
 class MetricScope(str, Enum):
     """Where the metrics came from and what they can claim."""
@@ -56,3 +58,11 @@ class EvaluationResult(BaseModel):
     can_claim_evolution: bool = False
     leaderboard_excluded: bool = False
     exclusion_reason: str | None = None
+
+    # v1.9.1: execution grounding distinguishes protocol simulation from real
+    # simulator / robot runs.  Defaults to the most conservative G0 level;
+    # backend runners must upgrade it when a real environment is exercised.
+    execution_grounding: str = ExecutionGroundingLevel.G0_PROTOCOL_SIMULATION.value
+
+    # v1.9.1: optional machine-auditable grounding manifest produced by real runs.
+    grounding_manifest: dict[str, Any] | None = None

@@ -7,11 +7,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from rosclaw_darwin.dashboard import charts
+from rosclaw_darwin.dashboard.darwinbench_routes import create_router
 
 
 class SVGResponse(Response):
@@ -25,6 +27,7 @@ class DashboardApp:
         self.app = FastAPI(title="ROSClaw-Darwin", version="0.1.0")
         self.data_dir = Path(data_dir) if data_dir else Path.cwd() / "data"
         self.templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+        self.app.include_router(create_router(self.templates))
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -83,6 +86,12 @@ class DashboardApp:
         async def arena_matches_page(request: Request) -> Any:
             return self.templates.TemplateResponse(request, "arena_matches.html", {
                 "matches": self._load_arena_matches(),
+            })
+
+        @self.app.get("/dashboard/arena", response_class=HTMLResponse)
+        async def arena_dashboard_page(request: Request) -> Any:
+            return self.templates.TemplateResponse(request, "arena_dashboard.html", {
+                "data": self._load_arena_dashboard(),
             })
 
         @self.app.get("/skills", response_class=HTMLResponse)
@@ -1616,15 +1625,361 @@ class DashboardApp:
         """Load promotion registry items."""
         from rosclaw_darwin.registry import PromotionRegistry
 
-        registry_dir = self.data_dir / "darwin" / "registry"
-        if not registry_dir.exists():
-            registry_dir = Path("data/darwin/registry")
+        candidates = [
+            self.data_dir / "darwin" / "registry",
+            Path("data/darwin/registry"),
+            Path("registry"),
+            Path("data_darwin_arena/registry"),
+        ]
+        registry_dir = None
+        for candidate in candidates:
+            if candidate.exists() and (candidate / "registry.json").exists():
+                registry_dir = candidate
+                break
+        if registry_dir is None:
+            return []
         try:
             reg = PromotionRegistry(registry_dir)
             return [item.model_dump(mode="json") for item in reg.list_items()]
         except Exception:
             return []
 
+    def _load_arena_dashboard(self) -> dict[str, Any]:
+        """Aggregate Arena real-learned-policy evidence for the dashboard."""
+        matrix_path = Path("configs/backends/capability_matrix.yaml")
+        arena: dict[str, Any] = {}
+        if matrix_path.exists():
+            try:
+                matrix = yaml.safe_load(matrix_path.read_text()) or {}
+                arena = next(
+                    (b for b in matrix.get("backends", []) if b.get("id") == "arena"),
+                    {},
+                )
+            except Exception:
+                arena = {}
+
+        registry = self._load_registry()
+        arena_items = [item for item in registry if item.get("id", "").startswith("arena_")]
+        evidence_levels = {item.get("evidence_level") for item in arena_items}
+
+        real_env_status = "unknown"
+        if arena.get("real_reset_step"):
+            real_env_status = "L1_REAL_ENV_SMOKE" if "L2_REAL_BASELINE_EVALUATED" not in evidence_levels else "L2+"
+        learned_policy_status = "L0_SYNTHETIC_PIPELINE_DEMO"
+        if "L2_REAL_BASELINE_EVALUATED" in evidence_levels:
+            learned_policy_status = "L2_REAL_BASELINE_EVALUATED"
+        candidate_eval_status = "not_demonstrated"
+        if "L3_REAL_NEGATIVE_REJECTION" in evidence_levels:
+            candidate_eval_status = "L3_REAL_NEGATIVE_REJECTION"
+        positive_rescue_status = "not_demonstrated"
+        if "L5_REAL_POSITIVE_RESCUE" in evidence_levels:
+            positive_rescue_status = "L5_REAL_POSITIVE_RESCUE"
+
+        # v1.6 supplement: scale metadata from evidence cards
+        scale_summary: dict[str, Any] = {"l2": {}, "l3": {}, "l5": {}}
+        for card in self._load_evidence_cards():
+            name = card.get("name", "")
+            level = card.get("evidence_level")
+            if level == "L2_REAL_BASELINE_EVALUATED" and "tiny_bc" in name:
+                scale_summary["l2"] = {
+                    "card": name,
+                    "seed_count": card.get("seed_count"),
+                    "scale_validated": card.get("scale_validated"),
+                }
+            elif level == "L3_REAL_NEGATIVE_REJECTION" and "wrong_action_scale" in name:
+                scale_summary["l3"] = {
+                    "card": name,
+                    "seed_count": card.get("seed_count"),
+                    "scale_validated": card.get("scale_validated"),
+                }
+            elif level in {"L5_REAL_POSITIVE_RESCUE", "L5_REAL_POSITIVE_RESCUE_CANDIDATE"} and "action_scale_fix" in name:
+                scale_summary["l5"] = {
+                    "card": name,
+                    "seed_count": card.get("seed_count"),
+                    "scale_validated": card.get("scale_validated"),
+                    "runtime_eligible": card.get("runtime_eligible"),
+                }
+
+        # Demo dataset quality
+        demo_audit_path = Path("data_darwin_arena/cube_goal_pose/demos_scripted_v2_100eps/audit.json")
+        demo_dataset: dict[str, Any] = {"available": False}
+        if demo_audit_path.exists():
+            try:
+                audit = json.loads(demo_audit_path.read_text())
+                demo_dataset = {
+                    "available": True,
+                    "unique_seeds": audit.get("num_unique_seeds"),
+                    "unique_episodes": audit.get("num_unique_episodes"),
+                    "transitions": audit.get("num_records"),
+                    "invalid_action_rate": audit.get("invalid_action_rate"),
+                    "episode_collapse": audit.get("episode_collapse_detected"),
+                }
+            except Exception:
+                pass
+
+        # Official workflow probe (legacy v1.6)
+        probe_path = Path("data_darwin_arena/official_workflow_probe_v2/probe.json")
+        official_workflow: dict[str, Any] = {"available": False}
+        if probe_path.exists():
+            try:
+                probe = json.loads(probe_path.read_text())
+                official_workflow = {
+                    "available": True,
+                    "workflow": probe.get("workflow"),
+                    "classification": probe.get("classification", "unknown"),
+                    "runnable": probe.get("official_policy_workflow_runnable"),
+                    "checkpoints": len(probe.get("checkpoint_files", [])),
+                }
+            except Exception:
+                pass
+
+        # v1.7 official GR1 Open Microwave path
+        def _load_json(path: Path) -> dict[str, Any]:
+            if not path.exists():
+                return {}
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+
+        asset_probe = _load_json(Path("data_darwin_arena/official_gr1_assets/asset_probe.json"))
+        download_report = _load_json(Path("data_darwin_arena/official_gr1_assets/download_report.json"))
+        replay_artifact = _load_json(Path("data_darwin_arena/official_gr1_replay/replay_run_artifact.json"))
+        server_start = _load_json(Path("data_darwin_arena/official_gr1_server/server_start.json"))
+        runner_artifact = _load_json(Path("data_darwin_arena/official_gr1_policy_runner/single_env/official_runner_artifact.json"))
+
+        official_path: dict[str, Any] = {
+            "asset_probe": {
+                "status": asset_probe.get("status", "missing"),
+                "failure_classification": asset_probe.get("failure_classification"),
+                "dataset_reachable": asset_probe.get("dataset", {}).get("reachable"),
+                "checkpoint_reachable": asset_probe.get("checkpoint", {}).get("reachable"),
+            },
+            "download": {
+                "status": download_report.get("overall_status", "missing"),
+                "failure_classification": download_report.get("failure_classification"),
+            },
+            "replay": {
+                "status": replay_artifact.get("status", "missing"),
+                "failure_classification": replay_artifact.get("failure_classification"),
+            },
+            "server": {
+                "status": server_start.get("status", "missing"),
+                "failure_classification": server_start.get("failure_classification"),
+            },
+            "runner": {
+                "status": runner_artifact.get("status", "missing"),
+                "failure_classification": runner_artifact.get("failure_classification"),
+                "metrics": runner_artifact.get("parsed_metrics", {}),
+            },
+        }
+        official_path["blocked"] = not all(
+            official_path[k]["status"] == "completed" for k in ("asset_probe", "download", "replay", "server", "runner")
+        )
+
+        blockers: list[str] = []
+        if not arena.get("real_reset_step"):
+            blockers.append("Arena real env reset/step not yet demonstrated")
+        if not arena.get("real_learned_policy"):
+            blockers.append("Real learned-policy baseline not yet demonstrated")
+        if not arena.get("real_candidate_paired_eval"):
+            blockers.append("Real candidate paired evaluation not yet demonstrated")
+        if not arena.get("positive_rescue_pilot") and not arena.get("positive_rescue_scaled"):
+            blockers.append("Positive adapter-fix rescue not yet demonstrated")
+        if not any(item.get("status") == "arena_real_learned_policy_baseline_evaluated" for item in arena_items):
+            blockers.append("No arena baseline registry item")
+        if not any(item.get("status") == "rejected" for item in arena_items):
+            blockers.append("No arena rejection registry item")
+        if not any(item.get("status") in {"real_adapter_fix_recovery", "real_adapter_fix_recovery_pilot"} for item in arena_items):
+            blockers.append("No arena adapter-fix recovery registry item")
+
+        if official_path.get("blocked"):
+            fc = (
+                official_path.get("asset_probe", {}).get("failure_classification")
+                or official_path.get("download", {}).get("failure_classification")
+                or official_path.get("runner", {}).get("failure_classification")
+                or "unknown"
+            )
+            blockers.append(f"Official GR1 Open Microwave workflow blocked: {fc}")
+
+        report_dir = Path("reports")
+        latest_reports: list[dict[str, str]] = []
+        if report_dir.exists():
+            for report in sorted(report_dir.glob("DARWIN_ARENA_*.md")) + sorted(report_dir.glob("DARWIN_V1_6_*.md")) + sorted(report_dir.glob("DARWIN_V1_8_*.md")) + sorted(report_dir.glob("ARENA_*.md")):
+                latest_reports.append({"name": report.name, "path": str(report)})
+
+        # v1.7.1 official GR1 Open Microwave hardening artifacts
+        server_health = _load_json(Path("data_darwin_arena/official_gr1_server_v171/server_health.json"))
+        rotation_fix_card = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_microwave_rotation_alignment_fix"),
+            {},
+        )
+        scale_card = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_open_microwave_official_baseline_scale_v171"),
+            {},
+        )
+        wrapper_card = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_official_wrapper_configs_prepared"),
+            {},
+        )
+        official_path["server_health"] = {
+            "status": "verified" if server_health.get("checkpoint_loaded") and server_health.get("port_open") else "missing",
+            "checkpoint_loaded": server_health.get("checkpoint_loaded"),
+            "port_open": server_health.get("port_open"),
+            "inference_smoke_passed": server_health.get("inference_smoke_passed"),
+        }
+        official_path["rotation_fix"] = {
+            "status": "validated" if rotation_fix_card else "missing",
+            "card": rotation_fix_card.get("name") if rotation_fix_card else None,
+        }
+        official_path["baseline_scale"] = {
+            "status": "validated" if scale_card else "missing",
+            "card": scale_card.get("name") if scale_card else None,
+            "total_episodes": scale_card.get("artifacts", {}).get("total_episodes") if scale_card else None,
+        }
+        official_path["candidate_wrapper"] = {
+            "status": "prepared" if wrapper_card else "not_started",
+            "card": wrapper_card.get("name") if wrapper_card else None,
+        }
+
+        # v1.8 official candidate-wrapper evolution
+        reference_baseline_v18 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_gn1x_official_reference_baseline_v18"),
+            {},
+        )
+        smoke_v18 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_official_wrapper_smoke_v18"),
+            {},
+        )
+        negative_v18 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_official_candidate_arena_gr1_door_lock_v18"),
+            {},
+        )
+        rescue_v18 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_official_candidate_arena_gr1_rollback_v18"),
+            {},
+        )
+
+
+        negative_metrics = _load_json(Path("data_darwin_arena/official_gr1_v18/candidates/door_lock_20ep_negative/candidate_metrics.json"))
+        rescue_metrics = _load_json(Path("data_darwin_arena/official_gr1_v18/candidates/rollback_20ep/candidate_metrics.json"))
+
+        official_path["reference_baseline_v18"] = {
+            "status": "frozen" if reference_baseline_v18 else "missing",
+            "card": reference_baseline_v18.get("name") if reference_baseline_v18 else None,
+            "metrics": reference_baseline_v18.get("artifacts", {}).get("aggregate") if reference_baseline_v18 else None,
+        }
+        official_path["wrapper_smoke_v18"] = {
+            "status": "passed" if smoke_v18 else "missing",
+            "card": smoke_v18.get("name") if smoke_v18 else None,
+        }
+        official_path["negative_candidate_v18"] = {
+            "status": negative_v18.get("promotion_decision", {}).get("status") if negative_v18 else "missing",
+            "card": negative_v18.get("name") if negative_v18 else None,
+            "classification": "diagnostic metric guard",
+            "candidate_kind": negative_v18.get("candidate_kind") if negative_v18 else None,
+            "wrapper_scope": negative_v18.get("wrapper_scope") if negative_v18 else None,
+            "diagnostic_note": negative_v18.get("diagnostic_note") if negative_v18 else None,
+            "allowed_claims": negative_v18.get("allowed_claims", []) if negative_v18 else [],
+            "blocked_claims": negative_v18.get("blocked_claims", []) if negative_v18 else [],
+            "success_rate": negative_metrics.get("success_rate"),
+            "door_moved_rate": negative_metrics.get("door_moved_rate"),
+            "delta_success_rate": negative_metrics.get("delta_success_rate"),
+        }
+        official_path["rescue_candidate_v18"] = {
+            "status": rescue_v18.get("promotion_decision", {}).get("status") if rescue_v18 else "missing",
+            "card": rescue_v18.get("name") if rescue_v18 else None,
+            "classification": "diagnostic metric-guard rollback",
+            "candidate_kind": rescue_v18.get("candidate_kind") if rescue_v18 else None,
+            "wrapper_scope": rescue_v18.get("wrapper_scope") if rescue_v18 else None,
+            "recovered_from": rescue_v18.get("recovered_from") if rescue_v18 else None,
+            "diagnostic_note": rescue_v18.get("diagnostic_note") if rescue_v18 else None,
+            "allowed_claims": rescue_v18.get("allowed_claims", []) if rescue_v18 else [],
+            "blocked_claims": rescue_v18.get("blocked_claims", []) if rescue_v18 else [],
+            "success_rate": rescue_metrics.get("success_rate"),
+            "door_moved_rate": rescue_metrics.get("door_moved_rate"),
+            "delta_success_rate": rescue_metrics.get("delta_success_rate"),
+        }
+
+        # v1.8.1 causal wrapper evolution
+        drift_summary_v181 = _load_json(Path("data_darwin_arena/official_gr1_v181/passive_drift/matrix_20ep/passive_drift_summary.json"))
+        negative_matrix_v181 = _load_json(Path("data_darwin_arena/official_gr1_v181/candidates/negative_matrix_20ep/negative_matrix_summary.json"))
+        effect_validation_card_v181 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_action_wrapper_effect_validation_v181"),
+            {},
+        )
+        rollback_rescue_card_v181 = next(
+            (c for c in self._load_evidence_cards() if c.get("name") == "arena_gr1_action_wrapper_rollback_recovery_v181"),
+            {},
+        )
+        rollback_rescue_metrics_v181 = _load_json(Path("data_darwin_arena/official_gr1_v181/candidates/rollback_rescue_20ep/candidate_metrics.json"))
+        noop_drift = drift_summary_v181.get("matrix", {}).get("noop_policy", {})
+        action_zero_drift = drift_summary_v181.get("matrix", {}).get("action_zero", {})
+
+        official_path["v181_causal_wrapper"] = {
+            "passive_drift": {
+                "summary_exists": bool(drift_summary_v181),
+                "severity": drift_summary_v181.get("passive_drift_severity"),
+                "noop_success_rate": noop_drift.get("success_rate"),
+                "noop_max_openness_mean": noop_drift.get("max_openness_mean"),
+                "action_zero_success_rate": action_zero_drift.get("success_rate"),
+                "action_zero_max_openness_mean": action_zero_drift.get("max_openness_mean"),
+                "official_metric_causal_risk": drift_summary_v181.get("official_success_metric_causal_risk"),
+            },
+            "wrapper_effect_validation": {
+                "card": effect_validation_card_v181.get("name") if effect_validation_card_v181 else None,
+                "status": effect_validation_card_v181.get("promotion_decision", {}).get("status") if effect_validation_card_v181 else "missing",
+                "evidence_level": effect_validation_card_v181.get("evidence_level") if effect_validation_card_v181 else None,
+            },
+            "negative_rejection_matrix": {
+                "summary_exists": bool(negative_matrix_v181),
+                "l3_found": negative_matrix_v181.get("l3_found") if negative_matrix_v181 else False,
+                "degraded_count": len(negative_matrix_v181.get("degraded_candidates", [])) if negative_matrix_v181 else 0,
+            },
+            "rollback_rescue": {
+                "card": rollback_rescue_card_v181.get("name") if rollback_rescue_card_v181 else None,
+                "status": rollback_rescue_card_v181.get("promotion_decision", {}).get("status") if rollback_rescue_card_v181 else "not_attempted",
+                "success_rate": rollback_rescue_metrics_v181.get("success_rate"),
+                "door_moved_rate": rollback_rescue_metrics_v181.get("door_moved_rate"),
+            },
+        }
+
+        official_path["status"] = {
+            "official_workflow_status": "verified" if not official_path.get("blocked") else "blocked",
+            "local_metric_match": bool(runner_artifact.get("parsed_metrics", {}).get("success_rate", 0) >= 0.8),
+            "leaderboard_status": "not_submitted",
+            "candidate_wrapper_status": "evaluated" if (negative_v18 and rescue_v18) else ("prepared" if wrapper_card else "not_started"),
+            "rotation_fix_status": "validated" if rotation_fix_card else "missing",
+            "server_health_status": official_path["server_health"]["status"],
+            "v181_causal_status": (
+                "negative_found"
+                if official_path["v181_causal_wrapper"]["negative_rejection_matrix"]["l3_found"]
+                else "evaluating"
+                if official_path["v181_causal_wrapper"]["wrapper_effect_validation"]["status"] != "missing"
+                else "not_started"
+            ),
+        }
+
+        return {
+            "matrix": arena,
+            "registry": arena_items,
+            "status": {
+                "real_env_status": real_env_status,
+                "learned_policy_status": learned_policy_status,
+                "candidate_eval_status": candidate_eval_status,
+                "positive_rescue_status": positive_rescue_status,
+                "max_evidence_level": arena.get("max_confirmed_evidence_level", arena.get("max_evidence_level", "unknown")),
+                "pilot_evidence_level": arena.get("max_pilot_evidence_level", "unknown"),
+                "backend_status": arena.get("status", "unknown"),
+                "runtime_enabled_routes": arena.get("runtime_enabled_routes", []),
+            },
+            "scale_summary": scale_summary,
+            "demo_dataset": demo_dataset,
+            "official_workflow": official_workflow,
+            "official_path": official_path,
+            "blockers": blockers,
+            "latest_reports": latest_reports,
+        }
     def _load_blocked_external(self) -> list[dict[str, Any]]:
         """Return blocked-external items from evidence cards and registry."""
         blocked: list[dict[str, Any]] = [

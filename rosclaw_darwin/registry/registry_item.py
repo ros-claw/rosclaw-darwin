@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from rosclaw_darwin.evolution.evidence_level import EvidenceLevel, EvidenceType
+
 
 class RegistryItem(BaseModel):
     """A single entry in the promotion registry."""
@@ -17,6 +19,11 @@ class RegistryItem(BaseModel):
     owner: str = "darwin"
     enabled_for_runtime: bool = False
     requires_human_approval: bool = False
+    # v1.4 evidence taxonomy
+    evidence_level: str = EvidenceLevel.L0_SYNTHETIC_PIPELINE_DEMO.value
+    evidence_type: str = EvidenceType.SYNTHETIC.value
+    runtime_eligible: bool = False
+    promotion_scope: str | None = None
 
     def is_promotable(self) -> bool:
         """Return True if the item can be enabled for runtime promotion."""
